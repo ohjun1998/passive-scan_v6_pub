@@ -64,11 +64,11 @@ jobs:
     - name: Upload Encrypted Matrix Results
       uses: actions/upload-artifact@v4
       with:
-        name: results-${{ matrix.tool }}--${{ matrix.group }}
+        name: results-${{ matrix.tool }}-${{ matrix.group }}
         path: encrypted_data/results_${{ matrix.tool }}_${{ matrix.group }}.tar.gz.gpg
         retention-days: 1
 
-  # [마스터 취합관]: 12대의 분산 데이터 복호화 후 엑셀 빌드 및 구글 드라이브 사출
+  # [마스터 취합관]: 12대의 분산 데이터 복호화 후 엑셀 빌드 및 디스코드 사출
   excel-reporter:
     runs-on: ubuntu-latest
     needs: matrix-scan
@@ -81,8 +81,9 @@ jobs:
       with:
         python-version: '3.10'
 
+    # 구글 라이브러리를 걷어내고 가벼운 openpyxl과 requests 패키지만 설치합니다.
     - name: Install Dependencies
-      run: pip install openpyxl google-api-python-client google-auth google-auth-httplib2 google-auth-oauthlib
+      run: pip install openpyxl requests
 
     # 취합관 가상머신에서도 엑셀 구조 설계를 위해 마스터 타깃 목록 복원
     - name: Create Targets File from Secret
@@ -109,11 +110,9 @@ jobs:
     - name: Build Intelligent Excel Report
       run: python txt_to_excel.py
 
-    # [보안 사출 고도화]: 구글 JSON 인증서 깨짐 방지를 위해 env 매핑 후 파일 생성하도록 수정 완료
-    - name: Upload Final Excel Report to Google Drive
+    # [보안 사출 전면 개조]: 구글 드라이브 대신 디스코드 웹훅 채널로 마스터 엑셀 자동 전송
+    - name: Upload Final Excel Report to Private Discord
       env:
-        GDRIVE_SERVICE_ACCOUNT_JSON: ${{ secrets.GDRIVE_SERVICE_ACCOUNT_JSON }}
-        GDRIVE_FOLDER_ID: ${{ secrets.GDRIVE_FOLDER_ID }}
+        DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
       run: |
-        echo "$GDRIVE_SERVICE_ACCOUNT_JSON" > service_account.json
         python upload_to_gdrive.py
