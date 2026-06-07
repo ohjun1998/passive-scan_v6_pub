@@ -106,13 +106,12 @@ jobs:
           fi
         done
 
-    # [★로그 버퍼링 차단★]: python -u 옵션을 추가하여 실시간 진행률을 강제로 화면에 출력합니다.
     - name: Build Intelligent Excel Report
-      run: python -u txt_to_excel.py
+      run: python txt_to_excel.py
 
-    # [★로그 버퍼링 차단★]: 디스코드 전송 단계도 실시간으로 로그를 모니터링합니다.
+    # [보안 사출 전면 개조]: 업로드 파일명 동기화 완료
     - name: Upload Final Excel Report to Private Discord
       env:
         DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
       run: |
-        python -u upload_to_discord.py
+        python upload_to_discord.py
