@@ -7,14 +7,13 @@ permissions:
   contents: write
 
 jobs:
-  # [마스터 분산 엔진]: 4개 그룹 x 3개 도구 = 총 12대 가상머신 동시 가동
+  # [마스터 분산 엔진]: 4개 그룹 x 4개 도구 = 총 16대 가상머신 동시 가동
   matrix-scan:
     runs-on: ubuntu-latest
     strategy:
       matrix:
         group: ["00", "01", "02", "03"]
-        tool: [gau, waybackurls, secretfinder]
-        #tool: [gau, waybackurls]
+        tool: [gau, waybackurls, secretfinder, trufflehog]
       fail-fast: false
     steps:
     - name: Checkout Repository
@@ -46,6 +45,10 @@ jobs:
           go install github.com/lc/gau/v2/cmd/gau@latest
           git clone https://github.com/m4ll0k/SecretFinder.git
           cd SecretFinder && pip install -r requirements.txt
+        elif [ "${{ matrix.tool }}" = "trufflehog" ]; then
+          go install github.com/lc/gau/v2/cmd/gau@latest
+          go install github.com/tomnomnom/waybackurls@latest
+          curl -sSfL https://raw.githubusercontent.com/trufflesecurity/trufflehog/main/scripts/install.sh | sudo sh -s -- -b /usr/local/bin
         fi
         echo "$HOME/go/bin" >> $GITHUB_PATH
 
@@ -69,7 +72,7 @@ jobs:
         path: encrypted_data/results_${{ matrix.tool }}_${{ matrix.group }}.tar.gz.gpg
         retention-days: 1
 
-  # [마스터 취합관]: 12대의 분산 데이터 복호화 후 엑셀 빌드 및 깃허브 보관함 사출
+  # [마스터 취합관]: 16대의 분산 데이터 복호화 후 엑셀 빌드 및 깃허브 보관함 사출
   excel-reporter:
     runs-on: ubuntu-latest
     needs: matrix-scan
@@ -110,7 +113,7 @@ jobs:
     - name: Build Intelligent Excel Report
       run: python -u txt_to_excel.py
 
-    # [🔥 핵심 교체 1] 디코 첨부 대신 깃허브 자체 무제한 안전 보관소에 최종 엑셀 업로드
+    # 디코 첨부 대신 깃허브 자체 무제한 안전 보관소에 최종 엑셀 업로드
     - name: Store Final Excel Report in GitHub Artifacts
       uses: actions/upload-artifact@v4
       with:
@@ -118,7 +121,7 @@ jobs:
         path: reports/passive_recon_report_v1.xlsx
         retention-days: 14
 
-    # [🔥 핵심 교체 2] 디스코드로는 파일 없이 "원클릭 다운로드 바로가기 링크"만 사출
+    # 디스코드로는 파일 없이 "원클릭 다운로드 바로가기 링크"만 사출
     - name: Alert Discord with Direct Download Link
       env:
         DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
