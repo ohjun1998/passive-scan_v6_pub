@@ -7,7 +7,6 @@ from openpyxl.styles import Font, PatternFill, Alignment
 def build_advanced_excel_report():
     print("[+] Initializing Optimized Multi-Tab Excel Engine...", flush=True)
     
-    # 1. 마스터 타깃 목록 로드 (탭 분할 기준점)
     if not os.path.exists('targets.txt'):
         print("[-] Error: targets.txt missing.", flush=True)
         return
@@ -15,10 +14,9 @@ def build_advanced_excel_report():
     with open('targets.txt', 'r') as f:
         targets = [line.strip() for line in f if line.strip()]
 
-    # 완벽한 중복 제거 구조: { 도메인: { URL: set(도구들) } }
     matrix_data = {domain: {} for domain in targets}
 
-    # 2. 12대 가상머신 데이터 전수조사
+    # 16대 가상머신 데이터 전수조사
     txt_files = glob.glob('results/**/*.*', recursive=True) + glob.glob('results/*.*')
     txt_files = [f for f in txt_files if os.path.isfile(f)]
 
@@ -31,6 +29,7 @@ def build_advanced_excel_report():
     for file_path in txt_files:
         filename = os.path.basename(file_path).lower()
         if 'secretfinder' in filename: source_tool = 'SecretFinder'
+        elif 'trufflehog' in filename: source_tool = 'TruffleHog'
         elif 'waybackurls' in filename: source_tool = 'Waybackurls'
         elif 'gau' in filename: source_tool = 'GAU'
         else: source_tool = 'Combined-Engine'
@@ -42,7 +41,7 @@ def build_advanced_excel_report():
                     if not url or url.startswith('#'): continue
                     
                     for domain in targets:
-                        if domain in url:
+                        if domain in url or domain in filename:
                             if url not in matrix_data[domain]:
                                 matrix_data[domain][url] = set()
                             matrix_data[domain][url].add(source_tool)
@@ -50,7 +49,6 @@ def build_advanced_excel_report():
         except Exception as e:
             print(f"[-] Error reading {filename}: {e}", flush=True)
 
-    # 3. 고품격 마스터 워크북 빌드 시작
     print("[+] Compiling Master Excel Workbook with Tabs...", flush=True)
     wb = Workbook()
 
@@ -58,12 +56,10 @@ def build_advanced_excel_report():
     fill_header = PatternFill(start_color='1F4E78', end_color='1F4E78', fill_type='solid')
     align_center = Alignment(horizontal='center', vertical='center')
 
-    # -----------------------------------------------------------------
-    # [1번째 마스터 탭]: 종합 대시보드 기틀 세팅
-    # -----------------------------------------------------------------
+    # Dashboard 시트 세팅
     ws_dash = wb.active
     ws_dash.title = "Dashboard"
-    dash_headers = ["No", "Target Domain (대상 도메인)", "Total URLs (총 URL 합계)", "SecretFinder Count (SecretFinder 탐지 건수)"]
+    dash_headers = ["No", "Target Domain (대상 도메인)", "Total URLs (총 URL 합계)", "Secret Criticals (시크릿 탐지 건수)"]
     ws_dash.append(dash_headers)
     ws_dash.row_dimensions[1].height = 26
     for col_num in range(1, 5):
@@ -72,9 +68,7 @@ def build_advanced_excel_report():
         cell.fill = fill_header
         cell.alignment = align_center
 
-    # -----------------------------------------------------------------
-    # [2번째 마스터 탭]: 위험 자산 취합 시트 세팅
-    # -----------------------------------------------------------------
+    # High Risk Targets 시트 세팅
     ws_high = wb.create_sheet(title="High Risk Targets")
     high_headers = ["No", "Domain (도메인)", "High Risk URL / Endpoint (위험 주소)", "Source Tool (탐지 도구)", "Risk Reason (위험 사유)"]
     ws_high.append(high_headers)
@@ -91,17 +85,14 @@ def build_advanced_excel_report():
     high_risk_idx = 1
     sheets_created = 0
 
-    # 4. 각 도메인 전용 탭 순차적 마감 루프
     for domain, url_map in matrix_data.items():
         if not url_map: continue
         
-        # [A] 대시보드 통계 실시간 누적
         total_urls = len(url_map)
-        secret_criticals = sum(1 for url, tools in url_map.items() if 'SecretFinder' in tools)
+        secret_criticals = sum(1 for url, tools in url_map.items() if 'SecretFinder' in tools or 'TruffleHog' in tools)
         ws_dash.append([dash_idx, domain, total_urls, secret_criticals])
         dash_idx += 1
 
-        # [B] 개별 도메인 전용 상세 시트 탭 추가 생성
         safe_tab_name = domain[:30]
         ws = wb.create_sheet(title=safe_tab_name)
         sheets_created += 1
@@ -121,10 +112,12 @@ def build_advanced_excel_report():
             tools_str = ", ".join(sorted(list(tools)))
             ws.append([idx, url, tools_str])
 
-            # [C] High Risk 자산 정밀 분류 작업
             is_high_risk = False
             reason = ""
-            if 'SecretFinder' in tools:
+            if 'TruffleHog' in tools:
+                is_high_risk = True
+                reason = "TruffleHog 실시간 유효성 검증 완료된 핵심 API Key 유출"
+            elif 'SecretFinder' in tools:
                 is_high_risk = True
                 reason = "SecretFinder 소스코드 내 보안 자격증명 노출 의심"
             else:
@@ -138,12 +131,10 @@ def build_advanced_excel_report():
                 ws_high.append([high_risk_idx, domain, url, tools_str, reason])
                 high_risk_idx += 1
 
-        # 개별 상세 탭 폭 지정 (연산 부하 없음)
         ws.column_dimensions['A'].width = 8
         ws.column_dimensions['B'].width = 85
         ws.column_dimensions['C'].width = 18
 
-    # 5. 최상단 마스터 종합 지표 탭 레이아웃 마감
     ws_dash.column_dimensions['A'].width = 8
     ws_dash.column_dimensions['B'].width = 35
     ws_dash.column_dimensions['C'].width = 25
@@ -155,7 +146,6 @@ def build_advanced_excel_report():
     ws_high.column_dimensions['D'].width = 15
     ws_high.column_dimensions['E'].width = 35
 
-    # 6. 파일 물리 디스크 세이빙
     if sheets_created > 0:
         os.makedirs('reports', exist_ok=True)
         report_path = 'reports/passive_recon_report_v1.xlsx'
