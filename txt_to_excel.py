@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import os
 import glob
+import re  # [에러 해결] 제어 문자 정제를 위한 정규식 모듈 추가
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
@@ -34,6 +35,11 @@ def build_advanced_excel_report():
                 for line in f:
                     url = line.strip()
                     if not url or url.startswith('#'): continue
+                    
+                    # [에러 해결 핵심] openpyxl IllegalCharacterError 방지를 위한 XML 제어 문자 (\x00-\x1f 범위 등) 제거
+                    url = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]', '', url)
+                    if not url: continue
+                    
                     for domain in targets:
                         if domain in url or domain in filename:
                             if url not in matrix_data[domain]:
@@ -104,7 +110,6 @@ def build_advanced_excel_report():
 
     # 데이터 채우기 루프
     for domain, url_map in matrix_data.items():
-        # [수정 사항 핵심] 데이터가 존재하지 않아도 0개 상태로 대시보드에 무조건 기록하도록 예외 처리 분기 구축
         if not url_map:
             passive_url_count = 0
             jsluice_count = 0
@@ -123,9 +128,8 @@ def build_advanced_excel_report():
             cell = ws_dash.cell(row=dash_idx, column=col_num)
             cell.font = font_data
             cell.border = thin_border
-            if (dash_idx % 2) == 1: cell.fill = fill_zebra # 얼룩말 패턴 무늬
+            if (dash_idx % 2) == 1: cell.fill = fill_zebra
             
-            # 컬럼 특성에 따른 맞춤 정렬 및 천 단위 콤마 서식 규격화
             if col_num in [1, 2]:
                 cell.alignment = align_center if col_num == 1 else align_left
             else:
@@ -134,7 +138,6 @@ def build_advanced_excel_report():
                 
         dash_idx += 1
 
-        # [구조 분리 차단선] 수집 데이터가 없는 도메인은 대시보드 세팅까지만 완료하고 개별 상세 탭(시트) 생성은 건너뜀
         if not url_map: continue
 
         # 개별 도메인 탭 추가 및 정밀 내역 수립
@@ -150,7 +153,7 @@ def build_advanced_excel_report():
             cell.border = thin_border
 
         for sub_idx, (url, tools) in enumerate(sorted(url_map.items()), 1):
-            if sub_idx > 1048500: break # 엑셀 단일시트 최대 한계선 방어
+            if sub_idx > 1048500: break
             tools_str = ", ".join(sorted(list(tools)))
             ws.append([sub_idx, url, tools_str])
             
