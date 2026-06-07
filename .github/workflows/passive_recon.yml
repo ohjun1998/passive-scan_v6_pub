@@ -13,8 +13,8 @@ jobs:
     strategy:
       matrix:
         group: ["00", "01", "02", "03"]
-        #tool: [gau, waybackurls, secretfinder]
-        tool: [gau, waybackurls]
+        tool: [gau, waybackurls, secretfinder]
+        #tool: [gau, waybackurls]
       fail-fast: false
     steps:
     - name: Checkout Repository
