@@ -76,9 +76,6 @@ def build_advanced_excel_report():
     align_left = Alignment(horizontal='left', vertical='center')
     align_right = Alignment(horizontal='right', vertical='center')
     
-    # [가독성 개선] 좁은 너비 칸에서 텍스트가 잘리지 않고 아래로 자동 줄바꿈되도록 셋업
-    align_left_wrap = Alignment(horizontal='left', vertical='center', wrap_text=True)
-    
     thin_side = Side(border_style="thin", color="E0E0E0")
     thin_border = Border(left=thin_side, right=thin_side, top=thin_side, bottom=thin_side)
     double_bottom_side = Side(border_style="double", color="2F3542")
@@ -122,6 +119,8 @@ def build_advanced_excel_report():
 
     # 데이터 채우기 루프
     for domain, url_map in matrix_data.items():
+        sheet_title = re.sub(r'[\\/\?\*\:\[\]]', '_', domain)[:30]
+
         if not url_map:
             passive_url_count = 0
             jsluice_count = 0
@@ -144,7 +143,7 @@ def build_advanced_excel_report():
             if col_num in [1, 2]:
                 cell.alignment = align_center if col_num == 1 else align_left
                 if col_num == 2 and url_map:
-                    cell.hyperlink = f"#'{domain[:30]}'!A1"
+                    cell.hyperlink = f"#'{sheet_title}'!A1"
                     cell.font = Font(name='Malgun Gothic', size=10, color='0056B3', underline='single')
             else:
                 cell.alignment = align_right
@@ -155,7 +154,7 @@ def build_advanced_excel_report():
         if not url_map: continue
 
         # 개별 도메인 탭 추가
-        ws = wb.create_sheet(title=domain[:30])
+        ws = wb.create_sheet(title=sheet_title)
         sheets_created += 1
         ws.append(["No", "Source Tool", "Found in JS File", "Target URL / Endpoint"]) 
         ws.row_dimensions[1].height = 28
@@ -173,16 +172,16 @@ def build_advanced_excel_report():
             ws.append([sub_idx, tools_str, files_str, url]) 
             
             row_num = sub_idx + 1
-            ws.row_dimensions[row_num].height = 20
+            # 💡 [요구사항 반영] row_dimensions 높이 지정을 해제하여 텍스트 유실을 완벽 차단
             for c in range(1, 5):
                 cell = ws.cell(row=row_num, column=c)
                 cell.font = font_data
                 cell.border = thin_border
                 if (row_num % 2) == 1: cell.fill = fill_zebra
                 
-                # 파일 경로와 URL 내역이 들어가는 열은 자동 줄바꿈 강제 연동
+                # 💡 [요구사항 반영] 줄바꿈 설정을 지우고 일반 좌측 정렬 매핑하여 일직선 유도
                 if c in [3, 4]:
-                    cell.alignment = align_left_wrap
+                    cell.alignment = align_left
                 else:
                     cell.alignment = align_center
 
@@ -200,17 +199,14 @@ def build_advanced_excel_report():
                     
             if is_high_risk:
                 ws_high.append([high_risk_idx - 1, tools_str, files_str, domain, url, reason]) 
-                ws_high.row_dimensions[high_risk_idx].height = 22
                 for c in range(1, 7):
                     cell = ws_high.cell(row=high_risk_idx, column=c)
                     cell.font = font_data
                     cell.border = thin_border
                     if (high_risk_idx % 2) == 1: cell.fill = fill_zebra
                     
-                    # 하이 리스크 시트 역시 대용량 텍스트 열 줄바꿈 처리
-                    if c in [3, 5, 6]:
-                        cell.alignment = align_left_wrap
-                    elif c == 4:
+                    # 💡 하이 리스크 시트 역시 한 줄 슬라이스로 깔끔하게 표기
+                    if c in [3, 4, 5, 6]:
                         cell.alignment = align_left
                     else:
                         cell.alignment = align_center
@@ -240,7 +236,7 @@ def build_advanced_excel_report():
                 cell.number_format = '#,##0'
 
     # ==========================================
-    # 6. 전 시트 자동 열 너비 맞춤 및 상한선 상한 제어 알고리즘
+    # 6. 전 시트 자동 열 너비 최적화 및 넉넉한 상한 제어 알고리즘
     # ==========================================
     for sheet in wb.worksheets:
         headers = [cell.value for cell in sheet[1]]
@@ -259,11 +255,11 @@ def build_advanced_excel_report():
             
             calculated_width = max(max_len + 4, 12)
             
-            # 지정 너비 잠금 및 텍스트 짤림 자동 방지선 구축
+            # 💡 [요구사항 반영] 폭을 넉넉하게 확장하여 일렬 짤림 가독성을 확보합니다.
             if header_value in ["High Risk URL / Endpoint", "Target URL / Endpoint"]:
-                sheet.column_dimensions[col_letter].width = 45  
+                sheet.column_dimensions[col_letter].width = 80  # 45에서 80으로 시원하게 확장
             elif header_value == "Found in JS File":
-                sheet.column_dimensions[col_letter].width = 20  
+                sheet.column_dimensions[col_letter].width = 40  # 20에서 40으로 시원하게 확장
             elif header_value == "Risk Reason":
                 sheet.column_dimensions[col_letter].width = 40  
             else:
