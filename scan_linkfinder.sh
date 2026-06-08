@@ -15,15 +15,21 @@ scan_jsluice() {
     if [ -d "$download_dir" ] && [ "$(ls -A "$download_dir" 2>/dev/null)" ]; then
         echo "[+] [$domain] [Stage 2: jsluice Offline Worker] Parsing local raw assets..."
         
+        rm -f "results/${domain}_jsluice_raw.txt"
+        touch "results/${domain}_jsluice_raw.txt"
+
         for js_file in "$download_dir"/*.js; do
             [ -f "$js_file" ] || continue
-            jsluice urls "$js_file" 2>/dev/null >> "results/${domain}_jsluice_raw.json" || true
+            local fname=$(basename "$js_file")
+            
+            # [기능 추가 핵심] URL 추출 시 소스 파일명을 탭(\t) 문자로 엮어 보존
+            jsluice urls "$js_file" 2>/dev/null | jq -r --arg f "$fname" '.url | "\($f)\t\(.)"' >> "results/${domain}_jsluice_raw.txt" || true
         done
 
-        if [ -s "results/${domain}_jsluice_raw.json" ]; then
-            cat "results/${domain}_jsluice_raw.json" | jq -r '.url' 2>/dev/null | sort -u > "results/${domain}_linkfinder.txt"
-            rm -f "results/${domain}_jsluice_raw.json"
-            echo "  -> [$domain] Analysis complete. Extracted $(wc -l < "results/${domain}_linkfinder.txt") endpoints."
+        if [ -s "results/${domain}_jsluice_raw.txt" ]; then
+            sort -u "results/${domain}_jsluice_raw.txt" > "results/${domain}_linkfinder.txt"
+            rm -f "results/${domain}_jsluice_raw.txt"
+            echo "  -> [$domain] Analysis complete. Extracted $(wc -l < "results/${domain}_linkfinder.txt") endpoints with source mapping."
         else
             echo "  -> [$domain] Warning: No endpoints discovered from local files."
             echo "" > "results/${domain}_linkfinder.txt"
