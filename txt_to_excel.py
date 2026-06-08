@@ -14,6 +14,7 @@ def build_advanced_excel_report():
     with open('targets.txt', 'r') as f:
         targets = [line.strip() for line in f if line.strip()]
 
+    # 다차원 데이터 매트릭스 선언 (tools 세트와 files 세트를 독립 추적)
     matrix_data = {domain: {} for domain in targets}
     txt_files = glob.glob('results/**/*.*', recursive=True) + glob.glob('results/*.*')
     txt_files = [f for f in txt_files if os.path.isfile(f)]
@@ -33,18 +34,29 @@ def build_advanced_excel_report():
         try:
             with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
                 for line in f:
-                    url = line.strip()
-                    if not url or url.startswith('#'): continue
+                    line_str = line.strip()
+                    if not line_str or line_str.startswith('#'): continue
                     
                     # openpyxl IllegalCharacterError 방지를 위한 XML 제어 문자 제거
-                    url = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]', '', url)
-                    if not url: continue
+                    line_str = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]', '', line_str)
+                    if not line_str: continue
+                    
+                    # [기능 추가 핵심] 탭(\t) 구분자가 존재할 경우 원본 실물 파일명 분리 추출
+                    js_file = "Passive Archive"
+                    if '\t' in line_str:
+                        parts = line_str.split('\t', 1)
+                        js_file = parts[0]
+                        url = parts[1]
+                    else:
+                        url = line_str
                     
                     for domain in targets:
                         if domain in url or domain in filename:
                             if url not in matrix_data[domain]:
-                                matrix_data[domain][url] = set()
-                            matrix_data[domain][url].add(source_tool)
+                                matrix_data[domain][url] = {"tools": set(), "files": set()}
+                            matrix_data[domain][url]["tools"].add(source_tool)
+                            if source_tool in ['LinkFinder', 'TruffleHog']:
+                                matrix_data[domain][url]["files"].add(js_file)
                             break
         except Exception as e:
             print(f"[-] Error reading {filename}: {e}", flush=True)
@@ -52,11 +64,10 @@ def build_advanced_excel_report():
     # 2. 엑셀 워크북 생성 및 스타일 정의
     wb = Workbook()
     
-    # 스타일 공통 정의
     font_header = Font(name='Malgun Gothic', size=11, bold=True, color='FFFFFF')
-    fill_header = PatternFill(start_color='2F3542', end_color='2F3542', fill_type='solid') # 딥 차콜네이비
-    fill_zebra = PatternFill(start_color='F8F9FA', end_color='F8F9FA', fill_type='solid')  # 연한 지브라 그레이
-    fill_summary = PatternFill(start_color='E9ECEF', end_color='E9ECEF', fill_type='solid') # 하단 합계 음영
+    fill_header = PatternFill(start_color='2F3542', end_color='2F3542', fill_type='solid') 
+    fill_zebra = PatternFill(start_color='F8F9FA', end_color='F8F9FA', fill_type='solid')  
+    fill_summary = PatternFill(start_color='E9ECEF', end_color='E9ECEF', fill_type='solid') 
     
     font_data = Font(name='Malgun Gothic', size=10, color='333333')
     font_summary = Font(name='Malgun Gothic', size=11, bold=True, color='000000')
@@ -65,10 +76,8 @@ def build_advanced_excel_report():
     align_left = Alignment(horizontal='left', vertical='center')
     align_right = Alignment(horizontal='right', vertical='center')
     
-    # 격자 테두리선 설정
     thin_side = Side(border_style="thin", color="E0E0E0")
     thin_border = Border(left=thin_side, right=thin_side, top=thin_side, bottom=thin_side)
-    
     double_bottom_side = Side(border_style="double", color="2F3542")
     summary_border = Border(left=thin_side, right=thin_side, top=thin_side, bottom=double_bottom_side)
 
@@ -90,10 +99,10 @@ def build_advanced_excel_report():
         cell.border = thin_border
 
     # ==========================================
-    # 4. High Risk Targets 시트 설계 (Source Tool 위치 변경)
+    # 4. High Risk Targets 시트 설계 (Found in JS File 컬럼 추가)
     # ==========================================
     ws_high = wb.create_sheet(title="High Risk Targets")
-    high_headers = ["No", "Source Tool", "Domain", "High Risk URL / Endpoint", "Risk Reason"] # Source Tool을 2번째로 이동
+    high_headers = ["No", "Source Tool", "Found in JS File", "Domain", "High Risk URL / Endpoint", "Risk Reason"] 
     ws_high.append(high_headers)
     ws_high.row_dimensions[1].height = 28
     
@@ -115,15 +124,14 @@ def build_advanced_excel_report():
             jsluice_count = 0
             trufflehog_count = 0
         else:
-            passive_url_count = sum(1 for url, tools in url_map.items() if 'Waybackurls' in tools or 'GAU' in tools)
-            jsluice_count = sum(1 for url, tools in url_map.items() if 'LinkFinder' in tools)
-            trufflehog_count = sum(1 for url, tools in url_map.items() if 'TruffleHog' in tools)
+            passive_url_count = sum(1 for url, data in url_map.items() if 'Waybackurls' in data["tools"] or 'GAU' in data["tools"])
+            jsluice_count = sum(1 for url, data in url_map.items() if 'LinkFinder' in data["tools"])
+            trufflehog_count = sum(1 for url, data in url_map.items() if 'TruffleHog' in data["tools"])
         
         # 대시보드 행 삽입
         ws_dash.append([dash_idx - 1, domain, passive_url_count, jsluice_count, trufflehog_count])
         ws_dash.row_dimensions[dash_idx].height = 22
         
-        # 대시보드 셀 스타일링 및 하이퍼링크 구현
         for col_num in range(1, 6):
             cell = ws_dash.cell(row=dash_idx, column=col_num)
             cell.font = font_data
@@ -132,10 +140,9 @@ def build_advanced_excel_report():
             
             if col_num in [1, 2]:
                 cell.alignment = align_center if col_num == 1 else align_left
-                # [요구사항 반영] 데이터가 존재하는 도메인만 상세 시트로 바로가기 링크 생성
                 if col_num == 2 and url_map:
                     cell.hyperlink = f"#'{domain[:30]}'!A1"
-                    cell.font = Font(name='Malgun Gothic', size=10, color='0056B3', underline='single') # 고급형 블루 링크 포맷
+                    cell.font = Font(name='Malgun Gothic', size=10, color='0056B3', underline='single')
             else:
                 cell.alignment = align_right
                 cell.number_format = '#,##0'
@@ -144,36 +151,37 @@ def build_advanced_excel_report():
 
         if not url_map: continue
 
-        # 개별 도메인 탭 추가 및 정밀 내역 수립 (Source Tool 위치 변경)
+        # 개별 도메인 탭 추가 및 정밀 내역 수립 (Found in JS File 컬럼 추가)
         ws = wb.create_sheet(title=domain[:30])
         sheets_created += 1
-        ws.append(["No", "Source Tool", "Target URL / Endpoint"]) # Source Tool을 2번째로 이동
+        ws.append(["No", "Source Tool", "Found in JS File", "Target URL / Endpoint"]) 
         ws.row_dimensions[1].height = 28
-        for col_num in range(1, 4):
+        for col_num in range(1, 5):
             cell = ws.cell(row=1, column=col_num)
             cell.font = font_header
             cell.fill = fill_header
             cell.alignment = align_center
             cell.border = thin_border
 
-        for sub_idx, (url, tools) in enumerate(sorted(url_map.items()), 1):
+        for sub_idx, (url, data) in enumerate(sorted(url_map.items()), 1):
             if sub_idx > 1048500: break
-            tools_str = ", ".join(sorted(list(tools)))
-            ws.append([sub_idx, tools_str, url]) # 데이터 삽입 순서 조정
+            tools_str = ", ".join(sorted(list(data["tools"])))
+            files_str = ", ".join(sorted(list(data["files"]))) if data["files"] else "-"
+            ws.append([sub_idx, tools_str, files_str, url]) 
             
             row_num = sub_idx + 1
             ws.row_dimensions[row_num].height = 20
-            for c in range(1, 4):
+            for c in range(1, 5):
                 cell = ws.cell(row=row_num, column=c)
                 cell.font = font_data
                 cell.border = thin_border
                 if (row_num % 2) == 1: cell.fill = fill_zebra
-                cell.alignment = align_center if c != 3 else align_left # URL 열만 좌측 정렬
+                cell.alignment = align_center if c != 4 else align_left 
 
             # 하이 리스크 필터링 가동
             is_high_risk = False
             reason = ""
-            if 'TruffleHog' in tools:
+            if 'TruffleHog' in data["tools"]:
                 is_high_risk = True
                 reason = "TruffleHog 검증 완료 핵심 민감 키(Secret) 유출 징후"
             else:
@@ -183,14 +191,14 @@ def build_advanced_excel_report():
                     reason = f"민감 키워드 파라미터 감지 ({', '.join(matched_keys)})"
                     
             if is_high_risk:
-                ws_high.append([high_risk_idx - 1, tools_str, domain, url, reason]) # 데이터 삽입 순서 조정
+                ws_high.append([high_risk_idx - 1, tools_str, files_str, domain, url, reason]) 
                 ws_high.row_dimensions[high_risk_idx].height = 22
-                for c in range(1, 6):
+                for c in range(1, 7):
                     cell = ws_high.cell(row=high_risk_idx, column=c)
                     cell.font = font_data
                     cell.border = thin_border
                     if (high_risk_idx % 2) == 1: cell.fill = fill_zebra
-                    cell.alignment = align_left if c in [3, 4, 5] else align_center # 가독성에 최적화된 맞춤 정렬
+                    cell.alignment = align_left if c in [4, 5, 6] else align_center 
                 high_risk_idx += 1
 
     # ==========================================
@@ -231,14 +239,13 @@ def build_advanced_excel_report():
                         if cell_len > max_len: max_len = cell_len
             sheet.column_dimensions[col_letter].width = max(max_len + 4, 12)
 
-    # 지정 수치 보정 고정폭 세팅 (가독성 확보)
+    # 지정 수치 보정 고정폭 세팅
     ws_dash.column_dimensions['A'].width = 10
     ws_dash.column_dimensions['B'].width = 35
     ws_dash.column_dimensions['C'].width = 26
     ws_dash.column_dimensions['D'].width = 22
     ws_dash.column_dimensions['E'].width = 22
 
-    # 결과 디렉토리 생성 및 파일 저장
     os.makedirs('reports', exist_ok=True)
     wb.save('reports/passive_recon_report_v1.xlsx')
     print("[+] [SUCCESS] Premium Multi-Tab Excel Document Successfully Constructed.", flush=True)
