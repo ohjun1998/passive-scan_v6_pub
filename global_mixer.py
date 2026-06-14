@@ -32,7 +32,6 @@ def run_mixer():
     all_urls = set()
     txt_files = glob.glob('results/**/*.*', recursive=True) + glob.glob('results/*.*')
     
-    # 모든 결과물의 URL을 도메인 상관없이 하나의 Set(중복 제거)에 쓸어 담기
     for file_path in txt_files:
         if not os.path.isfile(file_path): continue
         filename = os.path.basename(file_path).lower()
@@ -58,7 +57,7 @@ def run_mixer():
                         all_urls.add(abs_url)
         except: pass
 
-    # 정적 쓰레기 파일 필터링
+    # 정적 데이터 네트워크 낭비 차단 필터
     junk_exts = ('.png', '.jpg', '.jpeg', '.gif', '.svg', '.css', '.woff', '.woff2', '.ico', '.eot', '.ttf', '.mp4')
     valid_targets = []
     
@@ -66,11 +65,11 @@ def run_mixer():
         if not urlparse(u).path.lower().endswith(junk_exts):
             valid_targets.append(u)
 
-    # 💡 [핵심 아이디어] 도메인 경계를 허물고 전체 URL을 완벽하게 뒤섞음 (Global Shuffle)
+    # 🚀 [천재적 전술] 도메인 경계를 완전히 무너뜨리고 30만개 전체 타겟을 뒤섞음 (Global Shuffle)
     random.shuffle(valid_targets)
     print(f"[+] Total core verifiable URLs after global shuffle: {len(valid_targets)}")
 
-    # 💡 20대의 Httpx 머신이 쏠 수 있도록 총알을 20등분(Chunk)하여 저장
+    # 20대 타격 노드가 동시 난사할 수 있도록 청크 파일 분배
     os.makedirs('chunks', exist_ok=True)
     num_chunks = 20
     
@@ -83,7 +82,7 @@ def run_mixer():
         chunk_data = valid_targets[i*chunk_size : (i+1)*chunk_size]
         with open(f'chunks/chunk_{i:02d}.txt', 'w') as f:
             for url in chunk_data: f.write(url + '\n')
-        print(f"  -> Generated chunk_{i:02d}.txt : {len(chunk_data)} targets ready.")
+        print(f"  -> Generated chunks/chunk_{i:02d}.txt : {len(chunk_data)} tokens.")
 
 if __name__ == '__main__':
     run_mixer()
