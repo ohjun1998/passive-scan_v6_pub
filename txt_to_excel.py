@@ -20,12 +20,12 @@ def make_absolute(url, domain):
 
 def get_status_color(status):
     status_str = str(status)
-    if status_str.startswith('2'): return '28A745'
-    if status_str.startswith('3'): return '17A2B8'
-    if status_str.startswith('4'): return 'FD7E14'
-    if status_str.startswith('5'): return 'DC3545'
-    if 'Static' in status_str: return 'A8B8D0'
-    return '6C757D'
+    if status_str.startswith('2'): return '28A745' # Green
+    if status_str.startswith('3'): return '17A2B8' # Blue
+    if status_str.startswith('4'): return 'FD7E14' # Orange
+    if status_str.startswith('5'): return 'DC3545' # Red
+    if 'Static' in status_str: return 'A8B8D0'     # Gray-Blue
+    return '6C757D' # Gray (Dead)
 
 def build_advanced_excel_report():
     print("[+] Loading Fast-Track Excel Compiler...", flush=True)
@@ -67,10 +67,8 @@ def build_advanced_excel_report():
                     line_str = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]', '', line_str)
                     if not line_str: continue
                     
-                    if '\t' in line_str:
-                        js_file, raw_url = line_str.split('\t', 1)
-                    else:
-                        js_file, raw_url = "Passive Archive", line_str
+                    if '\t' in line_str: js_file, raw_url = line_str.split('\t', 1)
+                    else: js_file, raw_url = "Passive Archive", line_str
                     
                     if js_file in js_url_converter: js_file = js_url_converter[js_file]
                     
@@ -85,9 +83,7 @@ def build_advanced_excel_report():
                         matrix_data[current_domain][abs_url]["files"].add(js_file)
         except: pass
 
-    # ==========================================
-    # 💡 20대의 Httpx 노드가 만들어낸 상태 코드 결과 병합
-    # ==========================================
+    # 💡 20대의 Httpx 분산 타격 노드가 회수해온 분산 상태 코드 취합 연동
     status_codes = {}
     for res_file in glob.glob('results/httpx_results_*.json'):
         try:
@@ -100,7 +96,7 @@ def build_advanced_excel_report():
     junk_extensions = ('.png', '.jpg', '.jpeg', '.gif', '.svg', '.css', '.woff', '.woff2', '.ico', '.eot', '.ttf', '.mp4')
 
     # ==========================================
-    # 엑셀 워크북 제작부
+    # 엑셀 시트 렌더링 파트
     # ==========================================
     wb = Workbook()
     font_header, fill_header = Font(name='Malgun Gothic', bold=True, color='FFFFFF'), PatternFill(start_color='2F3542', end_color='2F3542', fill_type='solid')
@@ -144,7 +140,6 @@ def build_advanced_excel_report():
             tools_str = ", ".join(sorted(list(data["tools"])))
             files_str = ", ".join(sorted(list(data["files"]))) if data["files"] else "-"
             
-            # 정적 파일 필터링 반영 및 Httpx 상태 매핑
             if urlparse(url).path.lower().endswith(junk_extensions):
                 current_status = "Static(생략)"
             else:
@@ -163,7 +158,7 @@ def build_advanced_excel_report():
                 elif c in [3, 5]: cell.alignment = align_left
                 else: cell.alignment = align_center
 
-            # High Risk 처리
+            # 위협 탐지 필터링
             is_high_risk, reason = False, ""
             if 'TruffleHog' in data["tools"]: is_high_risk, reason = True, "TruffleHog 검증 완료 민감 키(Secret) 유출 징후"
             else:
@@ -183,6 +178,7 @@ def build_advanced_excel_report():
                     else: cell.alignment = align_center
                 high_risk_idx += 1
 
+    # 가독성 자동 마진 정돈
     for sheet in wb.worksheets:
         for col_idx, col in enumerate(sheet.columns, 1):
             col_letter = get_column_letter(col_idx)
