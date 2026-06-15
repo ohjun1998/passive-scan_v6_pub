@@ -26,13 +26,20 @@ def get_status_color(status):
     if status_str.startswith('4'): return 'FD7E14'
     if status_str.startswith('5'): return 'DC3545'
     if 'Static' in status_str: return 'A8B8D0'
+    if 'Skipped' in status_str: return 'E83E8C' # 💡 파괴적 엔드포인트는 눈에 띄는 보라/핑크색으로 표시
     return '6C757D'
 
 def get_safe_domain(target):
     return "wild_" + target[2:] if target.startswith('*.') else target
 
+def normalize_dynamic_path(path):
+    p = re.sub(r'[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}', '{UUID}', path)
+    p = re.sub(r'\b\d{3,}\b', '{ID}', p)
+    p = re.sub(r'\b[a-zA-Z0-9]{10,}\b', '{HASH}', p)
+    return p
+
 def build_advanced_excel_report():
-    print("[+] 스마트 필터링 기반 엑셀 대시보드 사출 엔진 가동 중...", flush=True)
+    print("[+] REST API 노이즈 제거 및 블랙리스트 보존 엑셀 대시보드 엔진 가동 중...", flush=True)
     if not os.path.exists('targets.txt'): return
     with open('targets.txt', 'r') as f: targets = [line.strip() for line in f if line.strip()]
 
@@ -48,9 +55,10 @@ def build_advanced_excel_report():
         except: pass
 
     matrix_data = {raw_target: {} for raw_target in targets}
-    
-    # 💡 엑셀 출력부 시그니처 카운터 보관소 (동적 경로 필터링 대응)
     signature_counts = {}
+    
+    junk_extensions = ('.png', '.jpg', '.jpeg', '.gif', '.svg', '.css', '.woff', '.woff2', '.ico', '.eot', '.ttf', '.mp4')
+    blacklist_words = ['logout', 'signout', 'delete', 'remove', 'revoke', 'destroy']
     
     for file_path in glob.glob('results/*.*'):
         filename = os.path.basename(file_path).lower()
@@ -93,16 +101,20 @@ def build_advanced_excel_report():
                         if parsed_netloc != base_domain:
                             continue
 
-                    # 💡 [진화된 핵심 최적화] 동일한 구조의 디렉토리, 확장자, 쿼리를 가진 URL을 5개까지만 기록
+                    # 💡 정적 쓰레기 파일은 엑셀에서도 완전히 버림 (블랙리스트 차단 코드는 삭제하여 엑셀에 남김)
+                    if urlparse(abs_url).path.lower().endswith(junk_extensions): continue
+
+                    # 시그니처 매핑 (정규화된 경로 적용)
                     parsed_for_sig = urlparse(abs_url)
                     query_keys = tuple(sorted([k for k, v in parse_qsl(parsed_for_sig.query, keep_blank_values=True)]))
-                    path_dir = posixpath.dirname(parsed_for_sig.path)
-                    path_ext = posixpath.splitext(parsed_for_sig.path)[1]
+                    norm_path = normalize_dynamic_path(parsed_for_sig.path)
+                    path_dir = posixpath.dirname(norm_path)
+                    path_ext = posixpath.splitext(norm_path)[1]
                     signature = (parsed_for_sig.netloc, path_dir, path_ext, query_keys)
 
                     if abs_url not in matrix_data[raw_target]:
                         if signature_counts.get(signature, 0) >= 5:
-                            continue # 구조가 동일한 6번째 URL부터는 엑셀에서 버림
+                            continue 
                         signature_counts[signature] = signature_counts.get(signature, 0) + 1
                         matrix_data[raw_target][abs_url] = {"tools": set(), "files": set()}
                         
@@ -120,8 +132,6 @@ def build_advanced_excel_report():
                     status_codes[data.get('url')] = data.get('status_code', 'Dead')
         except: pass
 
-    junk_extensions = ('.png', '.jpg', '.jpeg', '.gif', '.svg', '.css', '.woff', '.woff2', '.ico', '.eot', '.ttf', '.mp4')
-
     wb = Workbook()
     font_header, fill_header = Font(name='Malgun Gothic', bold=True, color='FFFFFF'), PatternFill(start_color='2F3542', end_color='2F3542', fill_type='solid')
     font_data, fill_zebra = Font(name='Malgun Gothic', size=10, color='333333'), PatternFill(start_color='F8F9FA', end_color='F8F9FA', fill_type='solid')
@@ -130,7 +140,7 @@ def build_advanced_excel_report():
 
     ws_dash = wb.active
     ws_dash.title = "Summary Dashboard"
-    ws_dash.append(["No", "타겟 도메인", "정제된 총 URL 수", "jsluice 추출 개수", "TruffleHog 탐지 개수"])
+    ws_dash.append(["No", "타겟 도메인", "완전 정제된 URL 수", "jsluice 추출 개수", "TruffleHog 탐지 개수"])
     for c in range(1, 6): ws_dash.cell(1, c).font = font_header; ws_dash.cell(1, c).fill = fill_header; ws_dash.cell(1, c).alignment = align_center; ws_dash.cell(1, c).border = thin_border
 
     ws_high = wb.create_sheet(title="High Risk Targets")
@@ -164,7 +174,12 @@ def build_advanced_excel_report():
             tools_str = ", ".join(sorted(list(data["tools"])))
             files_str = ", ".join(sorted(list(data["files"]))) if data["files"] else "-"
             
-            if urlparse(url).path.lower().endswith(junk_extensions):
+            # 💡 [핵심 로직] 블랙리스트 포함 여부를 검사하여 상태 코드 우회
+            is_blacklist = any(b in url.lower() for b in blacklist_words)
+            
+            if is_blacklist:
+                current_status = "Skipped(위험)"
+            elif urlparse(url).path.lower().endswith(junk_extensions):
                 current_status = "Static(생략)"
             else:
                 current_status = status_codes.get(url, 'Dead')
@@ -182,8 +197,12 @@ def build_advanced_excel_report():
                 elif c in [3, 5]: cell.alignment = align_left
                 else: cell.alignment = align_center
 
+            # 💡 [하이라이트 로직] 파괴적 엔드포인트는 스캔하지 않았어도 High Risk 시트에 박제
             is_high_risk, reason = False, ""
-            if 'TruffleHog' in data["tools"]: is_high_risk, reason = True, "TruffleHog 검증 완료: 민감 키(Secret) 유출 징후 탐지"
+            if 'TruffleHog' in data["tools"]: 
+                is_high_risk, reason = True, "TruffleHog 검증 완료: 민감 키(Secret) 유출 징후 탐지"
+            elif is_blacklist:
+                is_high_risk, reason = True, "파괴적 엔드포인트 (Httpx 스캔 제외 및 수동 점검 요망)"
             else:
                 matched = [key for key in high_risk_keywords if key in url.lower()]
                 if matched: is_high_risk, reason = True, f"민감 키워드 감지 ({', '.join(matched)})"
@@ -208,7 +227,7 @@ def build_advanced_excel_report():
             if header in ["타겟 절대 경로 (URL)", "고위험 경로 (Endpoint)"]: sheet.column_dimensions[col_letter].width = 80  
             elif header == "발견된 JS 파일명": sheet.column_dimensions[col_letter].width = 50  
             elif header == "탐지 사유": sheet.column_dimensions[col_letter].width = 40  
-            elif header == "응답 상태": sheet.column_dimensions[col_letter].width = 14
+            elif header == "응답 상태": sheet.column_dimensions[col_letter].width = 16
             else: sheet.column_dimensions[col_letter].width = 18
 
     ws_dash.column_dimensions['B'].width = 35
