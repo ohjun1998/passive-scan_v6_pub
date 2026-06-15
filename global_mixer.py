@@ -3,7 +3,8 @@ import os
 import glob
 import re
 import random
-from urllib.parse import urlparse
+import posixpath
+from urllib.parse import urlparse, parse_qsl
 
 def make_absolute(url, domain):
     if url.startswith('http://') or url.startswith('https://'): return url
@@ -15,7 +16,7 @@ def get_safe_domain(target):
     return "wild_" + target[2:] if target.startswith('*.') else target
 
 def run_mixer():
-    print("[+] 글로벌 셔플 엔진 가동 (분산 타격 준비)...")
+    print("[+] 글로벌 셔플 엔진 가동 (스마트 파라미터 & 동적 경로 필터링)...")
     if not os.path.exists('targets.txt'): return
     
     with open('targets.txt', 'r') as f:
@@ -63,7 +64,6 @@ def run_mixer():
                     abs_url = make_absolute(raw_url, base_domain)
                     parsed_netloc = urlparse(abs_url).netloc.split(':')[0]
                     
-                    # 와일드카드면 서브도메인 모두 허용, 아니면 엄격한 일치만 허용
                     if is_wildcard:
                         if not (parsed_netloc == base_domain or parsed_netloc.endswith('.' + base_domain)):
                             continue
@@ -77,12 +77,34 @@ def run_mixer():
     junk_exts = ('.png', '.jpg', '.jpeg', '.gif', '.svg', '.css', '.woff', '.woff2', '.ico', '.eot', '.ttf', '.mp4')
     valid_targets = []
     
+    # 💡 [진화된 핵심 최적화] 폴더(Directory) + 확장자(Ext) + 쿼리키(Query) 3중 구조 분석
+    signature_counts = {}
+    
     for u in all_urls:
-        if not urlparse(u).path.lower().endswith(junk_exts):
-            valid_targets.append(u)
+        parsed = urlparse(u)
+        
+        if parsed.path.lower().endswith(junk_exts):
+            continue
+            
+        query_keys = tuple(sorted([k for k, v in parse_qsl(parsed.query, keep_blank_values=True)]))
+        
+        # 경로의 마지막 부분을 변수(해시/ID)로 간주하고 폴더 위치와 확장자만 추출
+        # 예: /a/b/c/ei39dnr9.js -> path_dir: '/a/b/c', path_ext: '.js'
+        # 예: /api/user/123 -> path_dir: '/api/user', path_ext: ''
+        path_dir = posixpath.dirname(parsed.path)
+        path_ext = posixpath.splitext(parsed.path)[1]
+        
+        signature = (parsed.netloc, path_dir, path_ext, query_keys)
+        
+        # 동일한 구조의 URL이 5개 이상이면 폐기
+        if signature_counts.get(signature, 0) >= 5:
+            continue
+            
+        signature_counts[signature] = signature_counts.get(signature, 0) + 1
+        valid_targets.append(u)
 
     random.shuffle(valid_targets)
-    print(f"[+] 정적 자산을 제거한 순수 점검 대상 URL: 총 {len(valid_targets)} 개 (글로벌 셔플 완료)")
+    print(f"[+] 스마트 필터링 및 글로벌 셔플 완료! 최종 점검 대상: 총 {len(valid_targets)} 개")
 
     os.makedirs('chunks', exist_ok=True)
     num_chunks = 20
