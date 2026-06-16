@@ -26,7 +26,7 @@ def get_status_color(status):
     if status_str.startswith('4'): return 'FD7E14'
     if status_str.startswith('5'): return 'DC3545'
     if 'Static' in status_str: return 'A8B8D0'
-    if 'Skipped' in status_str: return 'E83E8C' # 💡 파괴적 엔드포인트는 눈에 띄는 보라/핑크색으로 표시
+    if 'Skipped' in status_str: return 'E83E8C' 
     return '6C757D'
 
 def get_safe_domain(target):
@@ -39,7 +39,7 @@ def normalize_dynamic_path(path):
     return p
 
 def build_advanced_excel_report():
-    print("[+] REST API 노이즈 제거 및 블랙리스트 보존 엑셀 대시보드 엔진 가동 중...", flush=True)
+    print("[+] 스마트 네비게이션 및 통계 탑재 대시보드 엔진 가동 중...", flush=True)
     if not os.path.exists('targets.txt'): return
     with open('targets.txt', 'r') as f: targets = [line.strip() for line in f if line.strip()]
 
@@ -101,10 +101,8 @@ def build_advanced_excel_report():
                         if parsed_netloc != base_domain:
                             continue
 
-                    # 💡 정적 쓰레기 파일은 엑셀에서도 완전히 버림 (블랙리스트 차단 코드는 삭제하여 엑셀에 남김)
                     if urlparse(abs_url).path.lower().endswith(junk_extensions): continue
 
-                    # 시그니처 매핑 (정규화된 경로 적용)
                     parsed_for_sig = urlparse(abs_url)
                     query_keys = tuple(sorted([k for k, v in parse_qsl(parsed_for_sig.query, keep_blank_values=True)]))
                     norm_path = normalize_dynamic_path(parsed_for_sig.path)
@@ -138,18 +136,37 @@ def build_advanced_excel_report():
     align_center, align_left = Alignment(horizontal='center', vertical='center'), Alignment(horizontal='left', vertical='center')
     thin_border = Border(left=Side(style="thin", color="E0E0E0"), right=Side(style="thin", color="E0E0E0"), top=Side(style="thin", color="E0E0E0"), bottom=Side(style="thin", color="E0E0E0"))
 
+    # ==========================================
+    # 1. Summary Dashboard 생성
+    # ==========================================
     ws_dash = wb.active
     ws_dash.title = "Summary Dashboard"
     ws_dash.append(["No", "타겟 도메인", "완전 정제된 URL 수", "jsluice 추출 개수", "TruffleHog 탐지 개수"])
     for c in range(1, 6): ws_dash.cell(1, c).font = font_header; ws_dash.cell(1, c).fill = fill_header; ws_dash.cell(1, c).alignment = align_center; ws_dash.cell(1, c).border = thin_border
 
+    # ==========================================
+    # 2. High Risk Targets 시트 세팅 (네비게이션 버튼 포함)
+    # ==========================================
     ws_high = wb.create_sheet(title="High Risk Targets")
+    
+    # 상단 대시보드 복귀 버튼 추가
+    ws_high.append(["🔙 대시보드로 돌아가기 (Return to Dashboard)"])
+    ws_high.merge_cells('A1:G1')
+    back_cell_h = ws_high.cell(row=1, column=1)
+    back_cell_h.hyperlink = "#'Summary Dashboard'!A1"
+    back_cell_h.font = Font(name='Malgun Gothic', size=11, bold=True, color='0056B3', underline='single')
+    back_cell_h.fill = PatternFill(start_color='E9ECEF', end_color='E9ECEF', fill_type='solid')
+    back_cell_h.alignment = align_left
+
     ws_high.append(["No", "소스 출처", "발견된 JS 파일명", "응답 상태", "도메인", "고위험 경로 (Endpoint)", "탐지 사유"]) 
-    for c in range(1, 8): ws_high.cell(1, c).font = font_header; ws_high.cell(1, c).fill = fill_header; ws_high.cell(1, c).alignment = align_center; ws_high.cell(1, c).border = thin_border
+    for c in range(1, 8): ws_high.cell(2, c).font = font_header; ws_high.cell(2, c).fill = fill_header; ws_high.cell(2, c).alignment = align_center; ws_high.cell(2, c).border = thin_border
 
-    high_risk_keywords = ['config', '.env', 'xml', 'json', 'secret', 'api/v', 'token', 'admin', 'password', 'key', 'credential', 'mysql']
-    dash_idx, high_risk_idx = 2, 2  
+    dash_idx = 2
+    high_risk_idx = 3 # 1행이 버튼, 2행이 헤더이므로 3행부터 시작
 
+    # ==========================================
+    # 3. 개별 도메인별 데이터 삽입 및 시트 생성
+    # ==========================================
     for raw_target, url_map in matrix_data.items():
         sheet_title = re.sub(r'[\\/\?\*\:\[\]]', '_', raw_target)[:30]
         passive_count = sum(1 for data in url_map.values() if 'Waybackurls' in data["tools"] or 'GAU' in data["tools"])
@@ -166,15 +183,24 @@ def build_advanced_excel_report():
         if not url_map: continue
 
         ws = wb.create_sheet(title=sheet_title)
+        
+        # 💡 상단 대시보드 복귀 버튼 추가
+        ws.append(["🔙 대시보드로 돌아가기 (Return to Dashboard)"])
+        ws.merge_cells('A1:E1')
+        back_cell = ws.cell(row=1, column=1)
+        back_cell.hyperlink = "#'Summary Dashboard'!A1"
+        back_cell.font = Font(name='Malgun Gothic', size=11, bold=True, color='0056B3', underline='single')
+        back_cell.fill = PatternFill(start_color='E9ECEF', end_color='E9ECEF', fill_type='solid')
+        back_cell.alignment = align_left
+
         ws.append(["No", "소스 출처", "발견된 JS 파일명", "응답 상태", "타겟 절대 경로 (URL)"]) 
-        for c in range(1, 6): ws.cell(1, c).font = font_header; ws.cell(1, c).fill = fill_header; ws.cell(1, c).alignment = align_center; ws.cell(1, c).border = thin_border
+        for c in range(1, 6): ws.cell(2, c).font = font_header; ws.cell(2, c).fill = fill_header; ws.cell(2, c).alignment = align_center; ws.cell(2, c).border = thin_border
 
         for sub_idx, (url, data) in enumerate(sorted(url_map.items()), 1):
             if sub_idx > 1048500: break
             tools_str = ", ".join(sorted(list(data["tools"])))
             files_str = ", ".join(sorted(list(data["files"]))) if data["files"] else "-"
             
-            # 💡 [핵심 로직] 블랙리스트 포함 여부를 검사하여 상태 코드 우회
             is_blacklist = any(b in url.lower() for b in blacklist_words)
             
             if is_blacklist:
@@ -184,12 +210,14 @@ def build_advanced_excel_report():
             else:
                 current_status = status_codes.get(url, 'Dead')
             
+            # 1행 버튼, 2행 헤더이므로 데이터는 3행부터 시작 (sub_idx + 2)
+            row_num = sub_idx + 2
             ws.append([sub_idx, escape_formula(tools_str), escape_formula(files_str), current_status, escape_formula(url)]) 
             
             for c in range(1, 6):
-                cell = ws.cell(sub_idx + 1, c)
+                cell = ws.cell(row_num, c)
                 cell.font = font_data; cell.border = thin_border
-                if ((sub_idx + 1) % 2) == 1: cell.fill = fill_zebra
+                if (row_num % 2) == 1: cell.fill = fill_zebra
                 
                 if c == 4:
                     cell.fill = PatternFill(start_color=get_status_color(current_status), end_color=get_status_color(current_status), fill_type='solid')
@@ -197,7 +225,6 @@ def build_advanced_excel_report():
                 elif c in [3, 5]: cell.alignment = align_left
                 else: cell.alignment = align_center
 
-            # 💡 [하이라이트 로직] 파괴적 엔드포인트는 스캔하지 않았어도 High Risk 시트에 박제
             is_high_risk, reason = False, ""
             if 'TruffleHog' in data["tools"]: 
                 is_high_risk, reason = True, "TruffleHog 검증 완료: 민감 키(Secret) 유출 징후 탐지"
@@ -208,7 +235,7 @@ def build_advanced_excel_report():
                 if matched: is_high_risk, reason = True, f"민감 키워드 감지 ({', '.join(matched)})"
                     
             if is_high_risk:
-                ws_high.append([high_risk_idx - 1, escape_formula(tools_str), escape_formula(files_str), current_status, escape_formula(raw_target), escape_formula(url), escape_formula(reason)]) 
+                ws_high.append([high_risk_idx - 2, escape_formula(tools_str), escape_formula(files_str), current_status, escape_formula(raw_target), escape_formula(url), escape_formula(reason)]) 
                 for c in range(1, 8):
                     cell = ws_high.cell(high_risk_idx, c)
                     cell.font = font_data; cell.border = thin_border
@@ -220,10 +247,26 @@ def build_advanced_excel_report():
                     else: cell.alignment = align_center
                 high_risk_idx += 1
 
+    # ==========================================
+    # 💡 대시보드 하단 총 합계(Total) 계산 수식 삽입
+    # ==========================================
+    if dash_idx > 2:
+        ws_dash.append(["", "📊 총 합계 (Total)", f"=SUM(C2:C{dash_idx-1})", f"=SUM(D2:D{dash_idx-1})", f"=SUM(E2:E{dash_idx-1})"])
+        for c in range(1, 6):
+            cell = ws_dash.cell(dash_idx, c)
+            cell.font = Font(name='Malgun Gothic', size=11, bold=True, color='FFFFFF')
+            cell.fill = PatternFill(start_color='1F4E78', end_color='1F4E78', fill_type='solid') # 눈에 띄는 진한 파란색
+            cell.border = thin_border
+            cell.alignment = align_center if c != 2 else align_left
+
+    # 컬럼 자동 너비 조절 및 최적화
     for sheet in wb.worksheets:
+        header_row = 1 if sheet.title == "Summary Dashboard" else 2
         for col_idx, col in enumerate(sheet.columns, 1):
             col_letter = get_column_letter(col_idx)
-            header = str(sheet.cell(1, col_idx).value)
+            header_cell_value = sheet.cell(header_row, col_idx).value
+            header = str(header_cell_value) if header_cell_value else ""
+            
             if header in ["타겟 절대 경로 (URL)", "고위험 경로 (Endpoint)"]: sheet.column_dimensions[col_letter].width = 80  
             elif header == "발견된 JS 파일명": sheet.column_dimensions[col_letter].width = 50  
             elif header == "탐지 사유": sheet.column_dimensions[col_letter].width = 40  
@@ -231,9 +274,13 @@ def build_advanced_excel_report():
             else: sheet.column_dimensions[col_letter].width = 18
 
     ws_dash.column_dimensions['B'].width = 35
+    
+    # 파일 저장 시 포커스를 대시보드 첫 화면으로 초기화
+    wb.active = 0 
+    
     os.makedirs('reports', exist_ok=True)
     wb.save('reports/passive_recon_report_v1.xlsx')
-    print("[+] 모든 엑셀 보고서 렌더링이 성공적으로 완료되었습니다!", flush=True)
+    print("[+] 네비게이션 적용 엑셀 보고서 렌더링이 성공적으로 완료되었습니다!", flush=True)
 
 if __name__ == '__main__':
     build_advanced_excel_report()
