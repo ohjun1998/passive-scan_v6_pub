@@ -149,7 +149,6 @@ def build_advanced_excel_report():
     # ==========================================
     ws_high = wb.create_sheet(title="High Risk Targets")
     
-    # 상단 대시보드 복귀 버튼 추가
     ws_high.append(["🔙 대시보드로 돌아가기 (Return to Dashboard)"])
     ws_high.merge_cells('A1:G1')
     back_cell_h = ws_high.cell(row=1, column=1)
@@ -161,8 +160,11 @@ def build_advanced_excel_report():
     ws_high.append(["No", "소스 출처", "발견된 JS 파일명", "응답 상태", "도메인", "고위험 경로 (Endpoint)", "탐지 사유"]) 
     for c in range(1, 8): ws_high.cell(2, c).font = font_header; ws_high.cell(2, c).fill = fill_header; ws_high.cell(2, c).alignment = align_center; ws_high.cell(2, c).border = thin_border
 
+    # 💡 [버그 수정 완료] 에러의 원인이었던 누락된 고위험 키워드 리스트 복원
+    high_risk_keywords = ['config', '.env', 'xml', 'json', 'secret', 'api/v', 'token', 'admin', 'password', 'key', 'credential', 'mysql']
+    
     dash_idx = 2
-    high_risk_idx = 3 # 1행이 버튼, 2행이 헤더이므로 3행부터 시작
+    high_risk_idx = 3
 
     # ==========================================
     # 3. 개별 도메인별 데이터 삽입 및 시트 생성
@@ -184,7 +186,6 @@ def build_advanced_excel_report():
 
         ws = wb.create_sheet(title=sheet_title)
         
-        # 💡 상단 대시보드 복귀 버튼 추가
         ws.append(["🔙 대시보드로 돌아가기 (Return to Dashboard)"])
         ws.merge_cells('A1:E1')
         back_cell = ws.cell(row=1, column=1)
@@ -210,7 +211,6 @@ def build_advanced_excel_report():
             else:
                 current_status = status_codes.get(url, 'Dead')
             
-            # 1행 버튼, 2행 헤더이므로 데이터는 3행부터 시작 (sub_idx + 2)
             row_num = sub_idx + 2
             ws.append([sub_idx, escape_formula(tools_str), escape_formula(files_str), current_status, escape_formula(url)]) 
             
@@ -255,7 +255,7 @@ def build_advanced_excel_report():
         for c in range(1, 6):
             cell = ws_dash.cell(dash_idx, c)
             cell.font = Font(name='Malgun Gothic', size=11, bold=True, color='FFFFFF')
-            cell.fill = PatternFill(start_color='1F4E78', end_color='1F4E78', fill_type='solid') # 눈에 띄는 진한 파란색
+            cell.fill = PatternFill(start_color='1F4E78', end_color='1F4E78', fill_type='solid')
             cell.border = thin_border
             cell.alignment = align_center if c != 2 else align_left
 
@@ -274,8 +274,6 @@ def build_advanced_excel_report():
             else: sheet.column_dimensions[col_letter].width = 18
 
     ws_dash.column_dimensions['B'].width = 35
-    
-    # 파일 저장 시 포커스를 대시보드 첫 화면으로 초기화
     wb.active = 0 
     
     os.makedirs('reports', exist_ok=True)
