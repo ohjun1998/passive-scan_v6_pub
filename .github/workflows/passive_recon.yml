@@ -5,6 +5,7 @@ on:
 
 permissions:
   contents: write
+  actions: read # 이전 아티팩트 다운로드를 위한 권한
 
 jobs:
   # ==========================================
@@ -32,7 +33,6 @@ jobs:
         go install github.com/lc/gau/v2/cmd/gau@latest
         go install github.com/tomnomnom/waybackurls@latest
         go install github.com/BishopFox/jsluice/cmd/jsluice@latest
-        # 💡 [핵심 추가] 최강의 서브도메인 탐지기 Subfinder 장착
         go install -v github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest
         sudo apt-get install jq -y
         curl -sSfL --retry 5 --retry-delay 5 "https://github.com/trufflesecurity/trufflehog/releases/download/v3.82.0/trufflehog_3.82.0_linux_amd64.tar.gz" -o trufflehog.tar.gz
@@ -216,6 +216,23 @@ jobs:
         for f in encrypted_storage/*.gpg; do
           gpg --decrypt --batch --passphrase "${{ secrets.ACTIONS_CRYPTO_PASSWORD }}" "$f" 2>/dev/null | tar -xzf - -C results/
         done
+
+    # 💡 [핵심 추가] 이전 엑셀 결과물을 자동으로 다운로드하여 신규 데이터를 판별합니다.
+    - name: 이전 스캔 결과 다운로드 (신규 데이터 비교용)
+      uses: dawidd6/action-download-artifact@v3
+      continue-on-error: true
+      with:
+        github_token: ${{secrets.GITHUB_TOKEN}}
+        workflow: passive_recon.yml
+        name: passive-recon-master-report-secured
+        path: previous_report/
+
+    - name: 이전 엑셀 리포트 압축 해제
+      continue-on-error: true
+      run: |
+        cd previous_report
+        unzip -P "${{ secrets.ACTIONS_CRYPTO_PASSWORD }}" passive_recon_report_secured.zip || true
+        cd ..
 
     - name: 지능형 컬러 엑셀 리포트 제작
       run: python -u txt_to_excel.py
