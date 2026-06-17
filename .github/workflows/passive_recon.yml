@@ -5,7 +5,7 @@ on:
 
 permissions:
   contents: write
-  actions: read # 이전 아티팩트 다운로드를 위한 권한
+  actions: read 
 
 jobs:
   # ==========================================
@@ -217,8 +217,7 @@ jobs:
           gpg --decrypt --batch --passphrase "${{ secrets.ACTIONS_CRYPTO_PASSWORD }}" "$f" 2>/dev/null | tar -xzf - -C results/
         done
 
-    # 💡 [핵심 추가] 이전 엑셀 결과물을 자동으로 다운로드하여 신규 데이터를 판별합니다.
-    - name: 이전 스캔 결과 다운로드 (신규 데이터 비교용)
+    - name: 이전 스캔 결과 다운로드 (신규 데이터 비교용 텍스트 DB 확보)
       uses: dawidd6/action-download-artifact@v3
       continue-on-error: true
       with:
@@ -227,20 +226,21 @@ jobs:
         name: passive-recon-master-report-secured
         path: previous_report/
 
-    - name: 이전 엑셀 리포트 압축 해제
+    - name: 이전 리포트 및 텍스트 DB 압축 해제
       continue-on-error: true
       run: |
         cd previous_report
         unzip -P "${{ secrets.ACTIONS_CRYPTO_PASSWORD }}" passive_recon_report_secured.zip || true
         cd ..
 
-    - name: 지능형 컬러 엑셀 리포트 제작
+    - name: 지능형 컬러 엑셀 리포트 제작 및 텍스트 DB 업데이트
       run: python -u txt_to_excel.py
 
-    - name: 최종 엑셀 리포트 비밀번호 암호화 (Secure ZIP)
+    # 💡 [보안 최적화] 무거운 엑셀과 가벼운 텍스트 DB를 함께 ZIP으로 묶어서 보관합니다.
+    - name: 최종 엑셀 리포트 및 텍스트 DB 비밀번호 암호화 (Secure ZIP)
       run: |
         cd reports
-        zip -P "${{ secrets.ACTIONS_CRYPTO_PASSWORD }}" passive_recon_report_secured.zip passive_recon_report_v1.xlsx
+        zip -P "${{ secrets.ACTIONS_CRYPTO_PASSWORD }}" passive_recon_report_secured.zip passive_recon_report_v1.xlsx master_url_db.txt
         cd ..
 
     - name: 깃허브 아티팩트에 금고형 엑셀 파일 저장
