@@ -54,7 +54,7 @@ def build_advanced_excel_report():
                         js_url_converter[s] = o
         except: pass
 
-    # 💡 [초고속 최적화] 무거운 엑셀 대신 가벼운 텍스트 DB(master_url_db.txt)를 읽어옵니다.
+    # 💡 무거운 엑셀 대신 가벼운 텍스트 DB(master_url_db.txt)를 읽어옵니다.
     previous_urls = set()
     prev_db_path = 'previous_report/master_url_db.txt'
     
@@ -144,16 +144,17 @@ def build_advanced_excel_report():
     # reports 폴더 생성
     os.makedirs('reports', exist_ok=True)
 
-    # 💡 [텍스트 DB 생성] 오늘 취합된 모든 정제 URL을 다음 스캔을 위해 저장합니다.
-    all_current_urls = set()
+    # 💡 [핵심 버그 패치] 과거의 URL과 오늘 찾은 URL을 합쳐서 영구히 누적(Accumulate)합니다.
+    all_cumulative_urls = set(previous_urls) # 1. 메모리에 있던 과거 데이터를 몽땅 붓는다.
+    
     for url_map in matrix_data.values():
         for url in url_map.keys():
-            all_current_urls.add(url)
+            all_cumulative_urls.add(url)     # 2. 오늘 찾은 데이터를 추가한다. (Set이므로 중복은 자동 제거됨)
             
     with open('reports/master_url_db.txt', 'w', encoding='utf-8') as f:
-        for u in sorted(all_current_urls):
+        for u in sorted(all_cumulative_urls):
             f.write(u + '\n')
-    print(f"[+] 새로운 텍스트 DB 백업 완료 (총 {len(all_current_urls)}개 기록됨)")
+    print(f"[+] 텍스트 DB 영구 누적 백업 완료 (총 {len(all_cumulative_urls)}개 기록됨)")
 
     # 디스코드 알림을 위한 전체 신규 발견 URL 총합 계산 및 저장
     total_new_found = sum(1 for url_map in matrix_data.values() for data in url_map.values() if data["is_new"])
@@ -303,7 +304,7 @@ def build_advanced_excel_report():
     ws_dash.column_dimensions['B'].width = 35
     wb.active = 0 
     wb.save('reports/passive_recon_report_v1.xlsx')
-    print("[+] 텍스트 DB 기반 모든 보고서 렌더링이 성공적으로 완료되었습니다!", flush=True)
+    print("[+] 텍스트 DB 기반 누적 보고서 렌더링이 성공적으로 완료되었습니다!", flush=True)
 
 if __name__ == '__main__':
     build_advanced_excel_report()
