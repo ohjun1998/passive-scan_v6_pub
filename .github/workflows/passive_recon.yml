@@ -60,7 +60,7 @@ jobs:
         retention-days: 1
 
   # ==========================================
-  # [Job 2] 글로벌 믹서기 (단 1대) - 타겟 병합, 중복제거, 셔플
+  # [Job 2] 글로벌 믹서기 (단 1대) - 과거 DB 병합, 중복제거, 셔플
   # ==========================================
   global-mixer:
     runs-on: ubuntu-latest
@@ -89,7 +89,24 @@ jobs:
           gpg --decrypt --batch --passphrase "${{ secrets.ACTIONS_CRYPTO_PASSWORD }}" "$f" 2>/dev/null | tar -xzf - -C results/
         done
 
-    - name: 글로벌 셔플 엔진 가동 (중복 제거 및 서브도메인 판별 통합)
+    # 💡 [핵심 추가] 글로벌 믹서가 구동되기 전 과거의 URL들을 다운받습니다.
+    - name: 이전 스캔 결과 다운로드 (과거 URL 타격대 합류용)
+      uses: dawidd6/action-download-artifact@v3
+      continue-on-error: true
+      with:
+        github_token: ${{secrets.GITHUB_TOKEN}}
+        workflow: passive_recon.yml
+        name: passive-recon-master-report-secured
+        path: previous_report/
+
+    - name: 이전 리포트 및 텍스트 DB 압축 해제
+      continue-on-error: true
+      run: |
+        cd previous_report
+        unzip -P "${{ secrets.ACTIONS_CRYPTO_PASSWORD }}" passive_recon_report_secured.zip || true
+        cd ..
+
+    - name: 글로벌 셔플 엔진 가동 (과거 DB 통합 및 Httpx 재검사 준비)
       run: python global_mixer.py
 
     - name: Httpx 타격 노드들을 위한 20분할 탄창 암호화
