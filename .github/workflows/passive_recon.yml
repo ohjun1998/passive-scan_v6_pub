@@ -40,6 +40,28 @@ jobs:
         sudo mv trufflehog /usr/local/bin/
         echo "$HOME/go/bin" >> $GITHUB_PATH
 
+    # 💡 [신규 DB 적용] 수집기가 다운로드 대상을 고르기 전, 과거에 받은 JS 리스트를 확보합니다.
+    - name: 이전 스캔 결과 다운로드 (과거 JS 다운로드 이력 확보용)
+      uses: dawidd6/action-download-artifact@v3
+      continue-on-error: true
+      with:
+        github_token: ${{secrets.GITHUB_TOKEN}}
+        workflow: passive_recon.yml
+        name: passive-recon-master-report-secured
+        path: previous_report/
+
+    - name: 이전 JS DB 압축 해제 및 글로벌 DB 세팅
+      run: |
+        touch global_js_db.txt
+        if [ -f "previous_report/passive_recon_report_secured.zip" ]; then
+          cd previous_report
+          unzip -P "${{ secrets.ACTIONS_CRYPTO_PASSWORD }}" passive_recon_report_secured.zip downloaded_js_db.txt || true
+          if [ -f "downloaded_js_db.txt" ]; then
+            mv downloaded_js_db.txt ../global_js_db.txt
+          fi
+          cd ..
+        fi
+
     - name: Phase 1 & 2 논스톱 실행 (수집 ➡️ 다운로드 ➡️ 오프라인 파싱)
       run: |
         chmod +x *.sh
@@ -60,7 +82,7 @@ jobs:
         retention-days: 1
 
   # ==========================================
-  # [Job 2] 글로벌 믹서기 (단 1대) - 과거 DB 병합, 중복제거, 셔플
+  # [Job 2] 글로벌 믹서기 (단 1대) - 타겟 병합, 중복제거, 셔플
   # ==========================================
   global-mixer:
     runs-on: ubuntu-latest
@@ -89,7 +111,6 @@ jobs:
           gpg --decrypt --batch --passphrase "${{ secrets.ACTIONS_CRYPTO_PASSWORD }}" "$f" 2>/dev/null | tar -xzf - -C results/
         done
 
-    # 💡 [핵심 추가] 글로벌 믹서가 구동되기 전 과거의 URL들을 다운받습니다.
     - name: 이전 스캔 결과 다운로드 (과거 URL 타격대 합류용)
       uses: dawidd6/action-download-artifact@v3
       continue-on-error: true
@@ -106,7 +127,7 @@ jobs:
         unzip -P "${{ secrets.ACTIONS_CRYPTO_PASSWORD }}" passive_recon_report_secured.zip || true
         cd ..
 
-    - name: 글로벌 셔플 엔진 가동 (과거 DB 통합 및 Httpx 재검사 준비)
+    - name: 글로벌 셔플 엔진 가동 (과거 DB 통합 및 Httpx 재검증 준비)
       run: python global_mixer.py
 
     - name: Httpx 타격 노드들을 위한 20분할 탄창 암호화
@@ -253,10 +274,11 @@ jobs:
     - name: 지능형 컬러 엑셀 리포트 제작 및 텍스트 DB 업데이트
       run: python -u txt_to_excel.py
 
+    # 💡 [신규 DB 추가] JS 다운로드 기록 DB(downloaded_js_db.txt)도 함께 묶어서 보관합니다.
     - name: 최종 엑셀 리포트 및 텍스트 DB 비밀번호 암호화 (Secure ZIP)
       run: |
         cd reports
-        zip -P "${{ secrets.ACTIONS_CRYPTO_PASSWORD }}" passive_recon_report_secured.zip passive_recon_report_*.xlsx master_url_db.txt
+        zip -P "${{ secrets.ACTIONS_CRYPTO_PASSWORD }}" passive_recon_report_secured.zip passive_recon_report_*.xlsx master_url_db.txt downloaded_js_db.txt
         cd ..
 
     - name: 깃허브 아티팩트에 금고형 엑셀 파일 저장
