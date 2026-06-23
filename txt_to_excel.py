@@ -40,7 +40,6 @@ def normalize_dynamic_path(path):
     p = re.sub(r'\b[a-zA-Z0-9]{10,}\b', '{HASH}', p)
     return p
 
-# 💡 [핵심 패치] High Risk 판별을 위한 고정밀 정규식(Regex) 컴파일
 regex_sensitive_exts = re.compile(r'\.(env|bak|swp|old|sql|sqlite|db|dump|log|config|properties|yml|yaml|ini)$', re.IGNORECASE)
 regex_sensitive_paths = re.compile(r'/(admin|administrator|wp-admin|manage|phpmyadmin|server-status|server-info|actuator|swagger-ui|graphql)($|/)', re.IGNORECASE)
 regex_credential_params = re.compile(r'(?:\?|&)(api_?key|token|jwt|auth|secret|password|pwd|access_?token)=([a-zA-Z0-9\-_\.]{8,})', re.IGNORECASE)
@@ -195,7 +194,6 @@ def build_advanced_excel_report():
     os.makedirs('reports', exist_ok=True)
 
     all_cumulative_urls = set(previous_urls) 
-    
     for url_map in matrix_data.values():
         for url in url_map.keys():
             all_cumulative_urls.add(url)     
@@ -222,6 +220,23 @@ def build_advanced_excel_report():
                     status_codes[data.get('url')] = data.get('status_code', 'Dead')
         except: pass
 
+    # ==========================================
+    # 💡 [신규 패치] Postman Collection (JSON) 빌드 엔진
+    # ==========================================
+    now_str = datetime.now().strftime("%Y%m%d_%H%M")
+    
+    postman_collection = {
+        "info": {
+            "name": f"🎯 Passive Recon Master API Collection ({now_str})",
+            "description": "자동 생성된 도메인별 API 및 엔드포인트 명세서입니다. Burp Suite의 OpenAPI Parser나 Postman에 Import하여 즉시 Fuzzing에 활용하세요.",
+            "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+        },
+        "item": []
+    }
+
+    # ==========================================
+    # 엑셀 보고서 생성 시작
+    # ==========================================
     wb = Workbook()
     font_header, fill_header = Font(name='Malgun Gothic', bold=True, color='FFFFFF'), PatternFill(start_color='2F3542', end_color='2F3542', fill_type='solid')
     font_data, fill_zebra = Font(name='Malgun Gothic', size=10, color='333333'), PatternFill(start_color='F8F9FA', end_color='F8F9FA', fill_type='solid')
@@ -255,8 +270,16 @@ def build_advanced_excel_report():
     dash_idx, high_risk_idx = 2, 3
 
     for raw_target, url_map in matrix_data.items():
+        if not url_map: continue
+        
         sheet_title = re.sub(r'[\\/\?\*\:\[\]]', '_', raw_target)[:30]
         
+        # 💡 [신규 패치] 포스트맨 컬렉션용 도메인 폴더 생성
+        postman_folder = {
+            "name": raw_target,
+            "item": []
+        }
+
         passive_count = len(url_map)
         domain_new_count = sum(1 for data in url_map.values() if data.get("is_new", False))
         trufflehog_count = sum(1 for data in url_map.values() if 'TruffleHog' in data["tools"])
@@ -299,8 +322,6 @@ def build_advanced_excel_report():
                 
         dash_idx += 1
 
-        if not url_map: continue
-
         ws = wb.create_sheet(title=sheet_title)
         ws.append(["🔙 대시보드로 돌아가기 (Return to Dashboard)"])
         ws.merge_cells('A1:G1')
@@ -323,6 +344,29 @@ def build_advanced_excel_report():
             is_new_mark = "🆕 NEW" if data.get("is_new", False) else "-"
             is_blacklist = any(b in url.lower() for b in blacklist_words)
             
+            # 💡 [신규 패치] 파괴적인 경로(logout 등)가 아니라면 포스트맨 컬렉션에 추가합니다.
+            if not is_blacklist:
+                parsed_pm = urlparse(url)
+                path_parts = [p for p in parsed_pm.path.split('/') if p]
+                query_items = parse_qsl(parsed_pm.query, keep_blank_values=True)
+                pm_query = [{"key": k, "value": v} for k, v in query_items]
+                
+                request_item = {
+                    "name": parsed_pm.path if parsed_pm.path else "/",
+                    "request": {
+                        "method": "GET",
+                        "header": [],
+                        "url": {
+                            "raw": url,
+                            "protocol": parsed_pm.scheme,
+                            "host": parsed_pm.netloc.split('.'),
+                            "path": path_parts,
+                            "query": pm_query
+                        }
+                    }
+                }
+                postman_folder["item"].append(request_item)
+
             if is_blacklist:
                 current_status = "Skipped(위험)"
             elif urlparse(url).path.lower().endswith(junk_extensions):
@@ -355,7 +399,6 @@ def build_advanced_excel_report():
                 elif c in [4, 5, 7]: cell.alignment = align_left
                 else: cell.alignment = align_center
 
-            # 💡 [고도화 패치] High Risk 판별 정규식 적용 (오탐률 최소화)
             is_high_risk, reason = False, ""
             
             if 'TruffleHog' in data["tools"]: 
@@ -389,6 +432,10 @@ def build_advanced_excel_report():
                     else: cell.alignment = align_center
                 high_risk_idx += 1
 
+        # 완성된 도메인 폴더를 포스트맨 컬렉션 마스터에 병합
+        if postman_folder["item"]:
+            postman_collection["item"].append(postman_folder)
+
     if dash_idx > 2:
         sum_formulas = [f"=SUM({get_column_letter(c)}2:{get_column_letter(c)}{dash_idx-1})" for c in range(4, len(dash_headers) + 1)]
         ws_dash.append(["", "📊 총 합계 (Total)", "-"] + sum_formulas)
@@ -417,10 +464,16 @@ def build_advanced_excel_report():
     ws_dash.column_dimensions['B'].width = 35
     wb.active = 0 
     
-    now_str = datetime.now().strftime("%Y%m%d_%H%M")
+    # 엑셀 보고서 저장
     report_filename = f"passive_recon_report_{now_str}.xlsx"
     wb.save(f'reports/{report_filename}')
-    print(f"[+] 텍스트 DB 기반 누적 보고서({report_filename}) 렌더링이 성공적으로 완료되었습니다!", flush=True)
+    print(f"[+] 텍스트 DB 기반 누적 보고서({report_filename}) 렌더링 완료!")
+
+    # 💡 [신규 패치] 포스트맨 JSON 파일 저장
+    postman_filename = f"postman_collection_{now_str}.json"
+    with open(f'reports/{postman_filename}', 'w', encoding='utf-8') as f:
+        json.dump(postman_collection, f, indent=4, ensure_ascii=False)
+    print(f"[+] Postman/Burp Suite 연동 API 명세서({postman_filename}) 사출 완료!", flush=True)
 
 if __name__ == '__main__':
     build_advanced_excel_report()
