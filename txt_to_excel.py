@@ -28,6 +28,7 @@ def get_status_color(status):
     if status_str.startswith('5'): return 'DC3545'
     if 'Static' in status_str: return 'A8B8D0'
     if 'Skipped' in status_str: return 'E83E8C' 
+    if 'Legacy' in status_str: return '6C757D'
     return '6C757D'
 
 def get_safe_domain(target):
@@ -38,6 +39,12 @@ def normalize_dynamic_path(path):
     p = re.sub(r'\b\d{3,}\b', '{ID}', p)
     p = re.sub(r'\b[a-zA-Z0-9]{10,}\b', '{HASH}', p)
     return p
+
+# 💡 [핵심 패치] High Risk 판별을 위한 고정밀 정규식(Regex) 컴파일
+regex_sensitive_exts = re.compile(r'\.(env|bak|swp|old|sql|sqlite|db|dump|log|config|properties|yml|yaml|ini)$', re.IGNORECASE)
+regex_sensitive_paths = re.compile(r'/(admin|administrator|wp-admin|manage|phpmyadmin|server-status|server-info|actuator|swagger-ui|graphql)($|/)', re.IGNORECASE)
+regex_credential_params = re.compile(r'(?:\?|&)(api_?key|token|jwt|auth|secret|password|pwd|access_?token)=([a-zA-Z0-9\-_\.]{8,})', re.IGNORECASE)
+regex_infra_paths = re.compile(r'/\.(git|svn|hg|aws|ssh|docker)($|/)', re.IGNORECASE)
 
 def build_advanced_excel_report():
     print("[+] 초고속 텍스트 DB 기반 차분 분석(Differential Analysis) 엔진 가동 중...", flush=True)
@@ -206,7 +213,6 @@ def build_advanced_excel_report():
     with open('reports/new_count.txt', 'w') as f:
         f.write(str(total_new_found))
 
-    # 응답코드 데이터를 메모리에 로드
     status_codes = {}
     for res_file in glob.glob('results/httpx_results_*.json'):
         try:
@@ -222,12 +228,8 @@ def build_advanced_excel_report():
     align_center, align_left = Alignment(horizontal='center', vertical='center'), Alignment(horizontal='left', vertical='center')
     thin_border = Border(left=Side(style="thin", color="E0E0E0"), right=Side(style="thin", color="E0E0E0"), top=Side(style="thin", color="E0E0E0"), bottom=Side(style="thin", color="E0E0E0"))
 
-    # ==========================================
-    # 1. Summary Dashboard 생성 (🌟 중요 응답코드 및 jsluice 신/구 분리 반영)
-    # ==========================================
     ws_dash = wb.active
     ws_dash.title = "Summary Dashboard"
-    
     dash_headers = [
         "No", "타겟 도메인", "🌟 신규 서브", "엑셀 누적 URL", "🔥 신규 발견", 
         "jsluice (기존)", "🔥 jsluice (신규)", "TruffleHog 탐지", 
@@ -250,42 +252,32 @@ def build_advanced_excel_report():
     ws_high.append(["No", "🔥 신규여부", "🌟 신규 서브", "소스 출처", "발견된 JS 파일명", "응답 상태", "도메인", "고위험 경로 (Endpoint)", "탐지 사유"]) 
     for c in range(1, 10): ws_high.cell(2, c).font = font_header; ws_high.cell(2, c).fill = fill_header; ws_high.cell(2, c).alignment = align_center; ws_high.cell(2, c).border = thin_border
 
-    high_risk_keywords = ['config', '.env', 'xml', 'json', 'secret', 'api/v', 'token', 'admin', 'password', 'key', 'credential', 'mysql']
     dash_idx, high_risk_idx = 2, 3
 
     for raw_target, url_map in matrix_data.items():
         sheet_title = re.sub(r'[\\/\?\*\:\[\]]', '_', raw_target)[:30]
         
-        # 전체 카운트
-        passive_count = len(url_map) # 전체 누적 URL 수 (이질감 패치 이후 전체가 누적됨)
+        passive_count = len(url_map)
         domain_new_count = sum(1 for data in url_map.values() if data.get("is_new", False))
         trufflehog_count = sum(1 for data in url_map.values() if 'TruffleHog' in data["tools"])
-        
-        # 💡 [핵심 패치] jsluice(LinkFinder) 신/구 데이터 완벽 분리
         jsluice_old = sum(1 for data in url_map.values() if 'LinkFinder' in data["tools"] and not data.get("is_new", False))
         jsluice_new = sum(1 for data in url_map.values() if 'LinkFinder' in data["tools"] and data.get("is_new", False))
         
-        # 💡 [핵심 패치] 타겟 도메인별 주요 응답 상태 코드(200, 401/403, 500) 추출
         count_200 = 0
         count_40x = 0
         count_50x = 0
         
         for url in url_map.keys():
             status = str(status_codes.get(url, 'Dead'))
-            if status.startswith('2'):
-                count_200 += 1
-            elif status in ['401', '403']:
-                count_40x += 1
-            elif status.startswith('5'):
-                count_50x += 1
+            if status.startswith('2'): count_200 += 1
+            elif status in ['401', '403']: count_40x += 1
+            elif status.startswith('5'): count_50x += 1
 
-        # 신규 서브도메인 감지
         current_subdomains = {urlparse(u).netloc for u in url_map.keys()}
         new_subdomains = current_subdomains - previous_subdomains
         has_new_sub = bool(new_subdomains) and bool(previous_subdomains)
         sub_dash_mark = "🌟 신규" if has_new_sub else "-"
         
-        # 대시보드 열에 데이터 주입
         ws_dash.append([
             dash_idx - 1, escape_formula(raw_target), sub_dash_mark, 
             passive_count, domain_new_count, 
@@ -298,12 +290,10 @@ def build_advanced_excel_report():
             cell.font = font_data; cell.border = thin_border
             cell.alignment = align_left if c == 2 else align_center
             
-            # 파란색 하이퍼링크 세팅
             if c == 2 and url_map:
                 cell.hyperlink = f"#'{sheet_title}'!A1"
                 cell.font = Font(name='Malgun Gothic', color='0056B3', underline='single')
             
-            # 신규 서브도메인, 신규 jsluice 추출 하이라이팅
             if c == 3 and has_new_sub: cell.font = Font(name='Malgun Gothic', bold=True, color='E83E8C')
             if c == 7 and jsluice_new > 0: cell.font = Font(name='Malgun Gothic', bold=True, color='E83E8C')
                 
@@ -340,7 +330,11 @@ def build_advanced_excel_report():
             else:
                 current_status = status_codes.get(url, 'Dead')
             
-            netloc = urlparse(url).netloc
+            parsed_url_obj = urlparse(url)
+            netloc = parsed_url_obj.netloc
+            path_lower = parsed_url_obj.path.lower()
+            query_string = parsed_url_obj.query
+            
             is_new_subdomain = (netloc in new_subdomains) and bool(previous_subdomains)
             sub_mark = "🌟 신규" if is_new_subdomain else "-"
 
@@ -352,11 +346,8 @@ def build_advanced_excel_report():
                 cell.font = font_data; cell.border = thin_border
                 if (row_num % 2) == 1: cell.fill = fill_zebra
                 
-                if c == 2 and data.get("is_new", False): 
-                    cell.font = Font(name='Malgun Gothic', bold=True, color='E83E8C')
-                
-                if c == 3 and is_new_subdomain:
-                    cell.font = Font(name='Malgun Gothic', bold=True, color='E83E8C')
+                if c == 2 and data.get("is_new", False): cell.font = Font(name='Malgun Gothic', bold=True, color='E83E8C')
+                if c == 3 and is_new_subdomain: cell.font = Font(name='Malgun Gothic', bold=True, color='E83E8C')
 
                 if c == 6:
                     cell.fill = PatternFill(start_color=get_status_color(current_status), end_color=get_status_color(current_status), fill_type='solid')
@@ -364,12 +355,22 @@ def build_advanced_excel_report():
                 elif c in [4, 5, 7]: cell.alignment = align_left
                 else: cell.alignment = align_center
 
+            # 💡 [고도화 패치] High Risk 판별 정규식 적용 (오탐률 최소화)
             is_high_risk, reason = False, ""
-            if 'TruffleHog' in data["tools"]: is_high_risk, reason = True, "TruffleHog 검증 완료: 민감 키(Secret) 유출 징후 탐지"
-            elif is_blacklist: is_high_risk, reason = True, "파괴적 엔드포인트 (Httpx 스캔 제외 및 수동 점검 요망)"
+            
+            if 'TruffleHog' in data["tools"]: 
+                is_high_risk, reason = True, "🔥 [Critical] TruffleHog: 소스코드 내 기밀 키(Secret) 유출 검증됨"
+            elif is_blacklist: 
+                is_high_risk, reason = True, "⚠️ [Warning] 파괴적 엔드포인트 (스캔 스킵됨 - 수동 점검 요망)"
             else:
-                matched = [key for key in high_risk_keywords if key in url.lower()]
-                if matched: is_high_risk, reason = True, f"민감 키워드 감지 ({', '.join(matched)})"
+                if regex_infra_paths.search(path_lower): 
+                    is_high_risk, reason = True, "🚨 [Infra] 버전관리 및 인프라 폴더 노출 의심 (.git, .aws 등)"
+                elif regex_sensitive_exts.search(path_lower): 
+                    is_high_risk, reason = True, "🚨 [File] 민감한 파일 확장자 노출 (백업, 설정, 로그, DB)"
+                elif regex_sensitive_paths.search(path_lower): 
+                    is_high_risk, reason = True, "🚨 [Path] 관리자 패널 또는 디버그 엔드포인트 의심"
+                elif regex_credential_params.search(query_string): 
+                    is_high_risk, reason = True, "🚨 [Param] URL 파라미터에 민감한 인증 토큰/키 평문 노출 의심"
                     
             if is_high_risk:
                 ws_high.append([high_risk_idx - 2, is_new_mark, sub_mark, escape_formula(tools_str), escape_formula(files_str), current_status, escape_formula(raw_target), escape_formula(url), escape_formula(reason)]) 
@@ -388,7 +389,6 @@ def build_advanced_excel_report():
                     else: cell.alignment = align_center
                 high_risk_idx += 1
 
-    # 대시보드 하단 총 합계 수식 동적 렌더링
     if dash_idx > 2:
         sum_formulas = [f"=SUM({get_column_letter(c)}2:{get_column_letter(c)}{dash_idx-1})" for c in range(4, len(dash_headers) + 1)]
         ws_dash.append(["", "📊 총 합계 (Total)", "-"] + sum_formulas)
