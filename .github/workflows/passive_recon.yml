@@ -155,12 +155,13 @@ jobs:
     - name: 저장소 체크아웃
       uses: actions/checkout@v4
 
-    # 💡 [핵심 패치] 최신 Httpx와 Nuclei 엔진 동시 설치
-    - name: Go 환경 및 최신 Httpx, Nuclei 설치
+    # 💡 [버그 수정] 환경 충돌을 방지하기 위해 GitHub 공식 Go 세팅 액션 사용
+    - name: Go 언어 환경 세팅
+      uses: actions/setup-go@v5
+      with: { go-version: 'stable' }
+
+    - name: 최신 Httpx, Nuclei 설치
       run: |
-        wget https://go.dev/dl/go1.21.6.linux-amd64.tar.gz
-        sudo tar -C /usr/local -xzf go1.21.6.linux-amd64.tar.gz
-        export PATH=$PATH:/usr/local/go/bin
         go install -v github.com/projectdiscovery/httpx/cmd/httpx@latest
         go install -v github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest
         echo "$HOME/go/bin" >> $GITHUB_PATH
@@ -176,7 +177,6 @@ jobs:
         mkdir -p chunks
         gpg --decrypt --batch --passphrase "${{ secrets.ACTIONS_CRYPTO_PASSWORD }}" temp_chunks/global_chunks.tar.gz.gpg 2>/dev/null | tar -xzf - -C chunks/
 
-    # 💡 [핵심 패치] Httpx 생존 확인 -> Nuclei 스텔스 타격 콤보 파이프라인
     - name: 다이내믹 스텔스 Httpx & Nuclei 타격 개시
       run: |
         mkdir -p strike_out
@@ -281,6 +281,7 @@ jobs:
     - name: 지능형 컬러 엑셀 리포트 제작 및 텍스트 DB 업데이트
       run: python -u txt_to_excel.py
 
+    # 💡 최종 비밀번호 압축 보관함에 Postman JSON 명세서(*.json)도 안전하게 자동 밀봉
     - name: 최종 엑셀 리포트 및 텍스트 DB 비밀번호 암호화 (Secure ZIP)
       run: |
         cd reports
