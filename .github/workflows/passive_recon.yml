@@ -49,14 +49,15 @@ jobs:
         name: passive-recon-master-report-secured
         path: previous_report/
 
-    - name: 이전 JS DB 압축 해제 및 글로벌 DB 세팅
+    # 💡 [SQLite 최적화] 대용량 텍스트 대신 SQLite DB에서 필요한 JS 다운로드 이력만 고속 추출
+    - name: 이전 SQLite DB에서 글로벌 JS 다운로드 이력 세팅
       run: |
         touch global_js_db.txt
         if [ -f "previous_report/passive_recon_report_secured.zip" ]; then
           cd previous_report
-          unzip -P "${{ secrets.ACTIONS_CRYPTO_PASSWORD }}" passive_recon_report_secured.zip downloaded_js_db.txt || true
-          if [ -f "downloaded_js_db.txt" ]; then
-            mv downloaded_js_db.txt ../global_js_db.txt
+          unzip -P "${{ secrets.ACTIONS_CRYPTO_PASSWORD }}" passive_recon_report_secured.zip recon_history.db || true
+          if [ -f "recon_history.db" ]; then
+            python3 -c "import sqlite3; conn=sqlite3.connect('recon_history.db'); c=conn.cursor(); c.execute('CREATE TABLE IF NOT EXISTS downloaded_js (url TEXT PRIMARY KEY)'); rows=c.execute('SELECT url FROM downloaded_js').fetchall(); f=open('../global_js_db.txt', 'w'); [f.write(r[0]+'\n') for r in rows]; f.close()"
           fi
           cd ..
         fi
@@ -155,15 +156,16 @@ jobs:
     - name: 저장소 체크아웃
       uses: actions/checkout@v4
 
-    # 💡 [버그 수정 완료] 시스템 충돌을 원천 차단하는 공식 Go 세팅 액션 적용
     - name: Go 언어 환경 세팅
       uses: actions/setup-go@v5
       with: { go-version: 'stable' }
 
-    - name: 최신 Httpx, Nuclei 설치
+    # 💡 [uro 최적화] 지능형 URL 단축 중복제거 엔진 uro 설치 추가
+    - name: 최신 Httpx, Nuclei 및 uro 설치
       run: |
         go install -v github.com/projectdiscovery/httpx/cmd/httpx@latest
         go install -v github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest
+        pip install uro
         echo "$HOME/go/bin" >> $GITHUB_PATH
 
     - name: 암호화된 분할 탄창 다운로드
@@ -172,10 +174,16 @@ jobs:
         name: global-chunks
         path: temp_chunks
         
-    - name: 분할 탄창 복호화
+    # 💡 [uro 최적화] 네트워크 스캔 직전 무의미하게 반복되는 웹 파라미터 다이어트 단행
+    - name: 분할 탄창 복호화 및 uro 지능형 필터링 가동
       run: |
         mkdir -p chunks
         gpg --decrypt --batch --passphrase "${{ secrets.ACTIONS_CRYPTO_PASSWORD }}" temp_chunks/global_chunks.tar.gz.gpg 2>/dev/null | tar -xzf - -C chunks/
+        if [ -s chunks/chunk_${{ matrix.group }}.txt ]; then
+          echo "[+] [uro] 스캔 가동 전 수집 타겟 디렉토리 최적화 가동..."
+          uro -i chunks/chunk_${{ matrix.group }}.txt -o chunks/clean_chunk.txt
+          mv chunks/clean_chunk.txt chunks/chunk_${{ matrix.group }}.txt
+        fi
 
     - name: 다이내믹 스텔스 Httpx & Nuclei 타격 개시
       run: |
@@ -197,7 +205,6 @@ jobs:
           
           httpx -l chunks/chunk_${{ matrix.group }}.txt -sc -random-agent -rl $RL -t $THREADS -timeout 4 -retries 1 -json -silent | tee strike_out/httpx_results_${{ matrix.group }}.json | jq -r --unbuffered '"[\(.status_code // "DEAD")] \(.url)"' | awk -v t="$TOTAL" '{print "    🎯 Httpx (" NR "/" t ") " $0; fflush()}'
           
-          # Httpx에서 생존이 확인된 정상 URL만 추출하여 Nuclei 스캔 먹이통으로 유입
           cat strike_out/httpx_results_${{ matrix.group }}.json | jq -r 'select(.status_code != null) | .url' > alive_urls.txt
           ALIVE_TOTAL=$(wc -l < alive_urls.txt)
           
@@ -243,8 +250,9 @@ jobs:
       uses: actions/setup-python@v5
       with: { python-version: '3.10' }
 
+    # 💡 [Async 최적화] Gemini 비동기 처리를 위한 aiohttp 모듈 라이브러리 추가 의존성 선언
     - name: Python 라이브러리 설치
-      run: pip install openpyxl requests
+      run: pip install openpyxl requests aiohttp
 
     - name: 타겟 도메인 리스트 생성
       run: echo "${{ secrets.TARGET_DOMAINS }}" > targets.txt
@@ -262,7 +270,7 @@ jobs:
           gpg --decrypt --batch --passphrase "${{ secrets.ACTIONS_CRYPTO_PASSWORD }}" "$f" 2>/dev/null | tar -xzf - -C results/
         done
 
-    - name: 이전 스캔 결과 다운로드 (신규 데이터 비교용 텍스트 DB 확보)
+    - name: 이전 스캔 결과 다운로드 (신규 데이터 비교용 SQLite DB 확보)
       uses: dawidd6/action-download-artifact@v3
       continue-on-error: true
       with:
@@ -271,24 +279,23 @@ jobs:
         name: passive-recon-master-report-secured
         path: previous_report/
 
-    - name: 이전 리포트 및 텍스트 DB 압축 해제
+    - name: 이전 리포트 및 SQLite 마스터 믹서 해제
       continue-on-error: true
       run: |
         cd previous_report
         unzip -P "${{ secrets.ACTIONS_CRYPTO_PASSWORD }}" passive_recon_report_secured.zip || true
         cd ..
 
-    # 💡 [핵심 패치] 파이썬 사출기에 안전하게 Gemini 3.5 Flash 구동용 토큰 투입
-    - name: 지능형 컬러 엑셀 리포트 제작 및 텍스트 DB 업데이트
+    - name: 지능형 컬러 엑셀 리포트 제작 및 SQLite 백업 갱신
       env:
         GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
       run: python -u txt_to_excel.py
 
-    # 💡 최종 비밀번호 압축 보관함에 Postman JSON 명세서(*.json)도 안전하게 자동 밀봉
-    - name: 최종 엑셀 리포트 및 텍스트 DB 비밀번호 암호화 (Secure ZIP)
+    # 💡 [SQLite 최적화] 대형 텍스트 파일(master_url_db.txt)을 삭제하고 오직 고속 바이너리 DB(recon_history.db) 하나만 묶어서 보관
+    - name: 최종 리포트 및 암호화 바이너리 영구 DB 금고 봉인 (Secure ZIP)
       run: |
         cd reports
-        zip -P "${{ secrets.ACTIONS_CRYPTO_PASSWORD }}" passive_recon_report_secured.zip passive_recon_report_*.xlsx master_url_db.txt downloaded_js_db.txt postman_collection_*.json
+        zip -P "${{ secrets.ACTIONS_CRYPTO_PASSWORD }}" passive_recon_report_secured.zip passive_recon_report_*.xlsx recon_history.db postman_collection_*.json
         cd ..
 
     - name: 깃허브 아티팩트에 금고형 엑셀 파일 저장
