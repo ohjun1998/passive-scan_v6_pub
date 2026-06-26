@@ -50,7 +50,7 @@ regex_sensitive_paths = re.compile(r'/(admin|administrator|wp-admin|manage|phpmy
 regex_credential_params = re.compile(r'(?:\?|&)(api_?key|token|jwt|auth|secret|password|pwd|access_?token)=([a-zA-Z0-9\-_\.]{8,})', re.IGNORECASE)
 regex_infra_paths = re.compile(r'/\.(git|svn|hg|aws|ssh|docker)($|/)', re.IGNORECASE)
 
-# 💡 [버그 수정] Gemini 3.5 Flash 예외 처리 및 마크다운 자동 제거 로직 추가
+# 💡 [3.5 Flash 복구 및 안정성 패치] 최신 엔진 유지, 대기시간(120초) 연장, 마크다운 예외 처리
 async def ask_gemini_async(session, gemini_key, batch):
     prompt = (
         "You are an elite Bug Bounty Hunter and Red Teamer. Analyze the following list of URLs discovered during reconnaissance.\n"
@@ -62,17 +62,18 @@ async def ask_gemini_async(session, gemini_key, batch):
         "- 'reason': short clear explanation in Korean of why this URL is high risk and how to test it.\n\n"
         f"URLs:\n{json.dumps(batch)}"
     )
+    # Gemini 3.5 Flash 엔진 유지!
     g_api_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key={gemini_key}"
     payload = {
         "contents": [{"parts": [{"text": prompt}]}],
         "generationConfig": {"responseMimeType": "application/json"}
     }
+    
     try:
-        async with session.post(g_api_url, json=payload, timeout=45) as res:
+        # AI가 고민할 수 있는 넉넉한 시간(120초) 부여
+        async with session.post(g_api_url, json=payload, timeout=120) as res:
             if res.status == 200:
                 res_json = await res.json()
-                
-                # 구글 Safety Filter 검열에 의해 답변이 차단되었는지 확인
                 if 'candidates' in res_json and len(res_json['candidates']) > 0:
                     candidate = res_json['candidates'][0]
                     if 'content' not in candidate:
@@ -81,7 +82,7 @@ async def ask_gemini_async(session, gemini_key, batch):
                     
                     raw_reply = candidate['content']['parts'][0]['text']
                     
-                    # AI가 불필요하게 보낸 마크다운 코드 블록을 강제로 벗겨냄
+                    # 마크다운 자동 제거기 (3.5 Flash의 불필요한 포맷팅 방어)
                     raw_reply = raw_reply.strip()
                     if raw_reply.startswith("```json"):
                         raw_reply = raw_reply[7:]
@@ -95,17 +96,25 @@ async def ask_gemini_async(session, gemini_key, batch):
                     return []
             else:
                 error_msg = await res.text()
-                print(f"[-] Gemini API HTTP Error {res.status}: {error_msg}")
+                print(f"[-] Gemini 3.5 Flash API HTTP Error {res.status}: {error_msg}")
+                return []
+                
+    except asyncio.TimeoutError:
+        print("[-] Gemini API 알림: AI 응답 시간 초과 (Timeout 120s).")
+    except json.JSONDecodeError:
+        print("[-] Gemini API 알림: AI가 JSON 형식을 지키지 않았습니다.")
     except Exception as e:
         print(f"[-] Gemini Request Exception: {type(e).__name__} - {str(e)}")
+        
     return []
 
 async def process_all_gemini(gemini_key, candidate_urls):
     ai_ranked_results = []
     async with aiohttp.ClientSession() as session:
         tasks = []
-        for i in range(0, len(candidate_urls), 30):
-            batch = candidate_urls[i:i+30]
+        # AI의 과부하 방지 및 정밀도 향상을 위해 배치를 15개로 축소
+        for i in range(0, len(candidate_urls), 15):
+            batch = candidate_urls[i:i+15]
             tasks.append(ask_gemini_async(session, gemini_key, batch))
         
         results = await asyncio.gather(*tasks)
@@ -275,7 +284,6 @@ def build_advanced_excel_report():
             ai_ranked_results.sort(key=lambda x: x.get('probability', 0), reverse=True)
             print(f"[+] Gemini 3.5 Flash 비동기 추론 완료: {len(ai_ranked_results)}개 표적 정렬 완료.")
 
-    # 💡 [버그 수정] postman_collection 딕셔너리를 엑셀 드로잉 전에 정상적으로 초기화 선언!
     now_str = datetime.now().strftime("%Y%m%d_%H%M")
     
     postman_collection = {
@@ -439,7 +447,6 @@ def build_advanced_excel_report():
                     else: cell.alignment = align_center
                 high_risk_idx += 1
 
-        # 💡 [버그 수정] 포스트맨 파일 병합 위치 복구 완료!
         if postman_folder["item"]: postman_collection["item"].append(postman_folder)
 
     if all_today_discovered_urls:
@@ -473,7 +480,6 @@ def build_advanced_excel_report():
     
     wb.save(f'reports/passive_recon_report_{now_str}.xlsx')
     
-    # 💡 [버그 수정] 드디어 정상적으로 JSON 덤프 가능!
     with open(f'reports/postman_collection_{now_str}.json', 'w', encoding='utf-8') as f:
         json.dump(postman_collection, f, indent=4, ensure_ascii=False)
         
