@@ -28,12 +28,14 @@ jobs:
       uses: actions/setup-go@v5
       with: { go-version: 'stable' }
 
-    - name: 핵심 정찰 도구 설치 (gau, waybackurls, jsluice, trufflehog, subfinder)
+    - name: 핵심 정찰 도구 설치 (gau, waybackurls, jsluice, trufflehog, subfinder, katana)
       run: |
         go install github.com/lc/gau/v2/cmd/gau@latest
         go install github.com/tomnomnom/waybackurls@latest
         go install github.com/BishopFox/jsluice/cmd/jsluice@latest
         go install -v github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest
+        go install github.com/projectdiscovery/katana/cmd/katana@latest
+        pip install uro
         sudo apt-get install jq -y
         curl -sSfL --retry 5 --retry-delay 5 "https://github.com/trufflesecurity/trufflehog/releases/download/v3.82.0/trufflehog_3.82.0_linux_amd64.tar.gz" -o trufflehog.tar.gz
         tar -xzf trufflehog.tar.gz trufflehog 2>/dev/null || tar -xzf trufflehog.tar.gz
@@ -49,7 +51,6 @@ jobs:
         name: passive-recon-master-report-secured
         path: previous_report/
 
-    # 💡 [SQLite 최적화] 대용량 텍스트 대신 SQLite DB에서 필요한 JS 다운로드 이력만 고속 추출
     - name: 이전 SQLite DB에서 글로벌 JS 다운로드 이력 세팅
       run: |
         touch global_js_db.txt
@@ -160,7 +161,6 @@ jobs:
       uses: actions/setup-go@v5
       with: { go-version: 'stable' }
 
-    # 💡 [uro 최적화] 지능형 URL 단축 중복제거 엔진 uro 설치 추가
     - name: 최신 Httpx, Nuclei 및 uro 설치
       run: |
         go install -v github.com/projectdiscovery/httpx/cmd/httpx@latest
@@ -174,7 +174,6 @@ jobs:
         name: global-chunks
         path: temp_chunks
         
-    # 💡 [uro 최적화] 네트워크 스캔 직전 무의미하게 반복되는 웹 파라미터 다이어트 단행
     - name: 분할 탄창 복호화 및 uro 지능형 필터링 가동
       run: |
         mkdir -p chunks
@@ -250,7 +249,6 @@ jobs:
       uses: actions/setup-python@v5
       with: { python-version: '3.10' }
 
-    # 💡 [Async 최적화] Gemini 비동기 처리를 위한 aiohttp 모듈 라이브러리 추가 의존성 선언
     - name: Python 라이브러리 설치
       run: pip install openpyxl requests aiohttp
 
@@ -291,7 +289,6 @@ jobs:
         GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
       run: python -u txt_to_excel.py
 
-    # 💡 [SQLite 최적화] 대형 텍스트 파일(master_url_db.txt)을 삭제하고 오직 고속 바이너리 DB(recon_history.db) 하나만 묶어서 보관
     - name: 최종 리포트 및 암호화 바이너리 영구 DB 금고 봉인 (Secure ZIP)
       run: |
         cd reports
