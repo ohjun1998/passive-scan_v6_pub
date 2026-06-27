@@ -82,7 +82,6 @@ def get_best_gemini_model(api_key):
     print("[!] 탐색 실패. 강제로 gemini-1.5-flash 모델로 돌파합니다.")
     return "gemini-1.5-flash"
 
-# 💡 [핵심 패치 1] 타임아웃 150초 증가 및 3번의 자동 재시도(불사조) 로직 탑재
 async def ask_gemini_async(session, gemini_key, batch, model_name):
     prompt = (
         "You are an elite Bug Bounty Hunter and Red Teamer. Analyze the following list of URLs discovered during reconnaissance.\n"
@@ -100,7 +99,6 @@ async def ask_gemini_async(session, gemini_key, batch, model_name):
         "generationConfig": {"responseMimeType": "application/json"}
     }
     
-    # 통신 대기 시간을 150초로 대폭 늘려서 AI가 답변을 작성할 충분한 시간을 줍니다.
     timeout = aiohttp.ClientTimeout(total=150)
     max_retries = 3
     
@@ -143,11 +141,9 @@ async def ask_gemini_async(session, gemini_key, batch, model_name):
             
     return []
 
-# 💡 [핵심 패치 2] 한 번에 보내는 타겟을 30개 -> 10개로 축소 (소화불량 방지)
 async def process_all_gemini(gemini_key, candidate_urls, model_name):
     ai_ranked_results = []
     async with aiohttp.ClientSession() as session:
-        # 배치를 10개로 잘게 쪼개어 속도와 안정성을 동시에 잡습니다.
         for i in range(0, len(candidate_urls), 10):
             batch = candidate_urls[i:i+10]
             print(f"[*] Gemini AI 지능형 분석 진행 중... ({i+1} ~ {min(i+10, len(candidate_urls))} / {len(candidate_urls)})")
@@ -156,7 +152,6 @@ async def process_all_gemini(gemini_key, candidate_urls, model_name):
             if isinstance(res_list, list):
                 ai_ranked_results.extend(res_list)
             
-            # 다음 묶음을 보내기 전 3초 휴식
             if i + 10 < len(candidate_urls):
                 await asyncio.sleep(3)
                 
@@ -213,7 +208,8 @@ def build_advanced_excel_report():
 
     for file_path in glob.glob('results/*.*'):
         filename = os.path.basename(file_path).lower()
-        match = re.match(r'^(.*)_(linkfinder|trufflehog|gau|waybackurls)\.txt$', filename)
+        # 💡 [핵심 패치 3] Katana 도구 인식 정규식 추가
+        match = re.match(r'^(.*)_(linkfinder|trufflehog|gau|waybackurls|katana)\.txt$', filename)
         if not match: continue
         
         safe_domain = match.group(1)
@@ -227,6 +223,7 @@ def build_advanced_excel_report():
         elif 'trufflehog' in filename: source_tool = 'TruffleHog'
         elif 'waybackurls' in filename: source_tool = 'Waybackurls'
         elif 'gau' in filename: source_tool = 'GAU'
+        elif 'katana' in filename: source_tool = 'Katana'
         else: continue
 
         try:
