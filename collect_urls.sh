@@ -17,39 +17,46 @@ collect_master() {
         base_domain="${raw_domain#\*.}"
         safe_domain="wild_${base_domain}"
         regex="^https?://([a-zA-Z0-9.-]+\.)?${base_domain//./\.}(/|$)"
-        echo "[+] [${raw_domain}] 🔍 와일드카드 감지: Subfinder로 서브도메인을 전수조사한 후 아카이빙을 진행합니다."
+        echo "[+] [${raw_domain}] 🔍 와일드카드 감지: Subfinder 전수조사..."
         
         subfinder -d "$base_domain" -all -silent > "results/${safe_domain}_subs.txt"
         echo "$base_domain" >> "results/${safe_domain}_subs.txt"
         sort -u "results/${safe_domain}_subs.txt" -o "results/${safe_domain}_subs.txt"
         
-        local sub_count=$(wc -l < "results/${safe_domain}_subs.txt")
-        echo "  -> [Subfinder] 총 ${sub_count}개의 서브도메인을 발견했습니다."
+        # 💡 [방어 1] 서브도메인이 너무 많으면 OOM 발생하므로 1000개로 컷트
+        shuf -n 1000 "results/${safe_domain}_subs.txt" -o "results/${safe_domain}_subs.txt" 2>/dev/null || true
         
-        cat "results/${safe_domain}_subs.txt" | gau > "results/${safe_domain}_gau.txt" 2>/dev/null
-        cat "results/${safe_domain}_subs.txt" | waybackurls > "results/${safe_domain}_waybackurls.txt" 2>/dev/null
+        cat "results/${safe_domain}_subs.txt" | timeout 5m gau > "results/${safe_domain}_gau.txt" 2>/dev/null
+        cat "results/${safe_domain}_subs.txt" | timeout 5m waybackurls > "results/${safe_domain}_waybackurls.txt" 2>/dev/null
     else
-        echo "[+] [${raw_domain}] 🔍 단일 도메인 정찰을 시작합니다."
-        echo "$base_domain" | gau > "results/${safe_domain}_gau.txt" 2>/dev/null
-        echo "$base_domain" | waybackurls > "results/${safe_domain}_waybackurls.txt" 2>/dev/null
+        echo "[+] [${raw_domain}] 🔍 단일 도메인 정찰..."
+        echo "$base_domain" | timeout 5m gau > "results/${safe_domain}_gau.txt" 2>/dev/null
+        echo "$base_domain" | timeout 5m waybackurls > "results/${safe_domain}_waybackurls.txt" 2>/dev/null
     fi
 
     grep -iE "$regex" "results/${safe_domain}_gau.txt" | sort -u -o "results/${safe_domain}_gau.txt"
     grep -iE "$regex" "results/${safe_domain}_waybackurls.txt" | sort -u -o "results/${safe_domain}_waybackurls.txt"
 
-    echo "[+] [${raw_domain}] 🕷️ Katana 지능형 크롤링 준비 (uro 트래픽 최적화)..."
+    echo "[+] [${raw_domain}] 🕷️ Katana 지능형 크롤링 준비..."
     cat "results/${safe_domain}_gau.txt" "results/${safe_domain}_waybackurls.txt" 2>/dev/null | sort -u > "results/${safe_domain}_raw_seed.txt"
+    
+    # 💡 [방어 2] uro 처리 중 OOM 방지 (최대 5만개만 넣기)
+    shuf -n 50000 "results/${safe_domain}_raw_seed.txt" -o "results/${safe_domain}_raw_seed.txt" 2>/dev/null || true
     uro -i "results/${safe_domain}_raw_seed.txt" -o "results/${safe_domain}_clean_seed.txt"
 
-    echo "  -> [Katana] 정제된 시드(Seed) 기반 Depth 1 크롤링 시작..."
-    katana -list "results/${safe_domain}_clean_seed.txt" -d 1 -jc -kf all -rl 20 -silent > "results/${safe_domain}_katana.txt" 2>/dev/null
-    grep -iE "$regex" "results/${safe_domain}_katana.txt" | sort -u -o "results/${safe_domain}_katana.txt"
-    rm -f "results/${safe_domain}_raw_seed.txt" "results/${safe_domain}_clean_seed.txt"
+    # 💡 [방어 3] Katana는 무거우므로 300개만 샘플링하여 크롤링
+    shuf -n 300 "results/${safe_domain}_clean_seed.txt" > "results/${safe_domain}_katana_seed.txt" 2>/dev/null || cp "results/${safe_domain}_clean_seed.txt" "results/${safe_domain}_katana_seed.txt"
 
-    # JS 파일만 추출 (Katana 결과물도 포함)
+    echo "  -> [Katana] Depth 1 크롤링 시작 (최대 5분 타임아웃)..."
+    # 💡 [방어 4] 스레드(-c)를 2로 제한하고 타임아웃 5분 강제 적용
+    timeout 5m katana -list "results/${safe_domain}_katana_seed.txt" -d 1 -jc -kf all -c 2 -rl 50 -ct 10 -silent > "results/${safe_domain}_katana.txt" 2>/dev/null
+    grep -iE "$regex" "results/${safe_domain}_katana.txt" | sort -u -o "results/${safe_domain}_katana.txt"
+    
+    rm -f "results/${safe_domain}_raw_seed.txt" "results/${safe_domain}_clean_seed.txt" "results/${safe_domain}_katana_seed.txt"
+
+    # JS 파일 추출
     cat "results/${safe_domain}_gau.txt" "results/${safe_domain}_waybackurls.txt" "results/${safe_domain}_katana.txt" 2>/dev/null | grep -E '\.js($|\?)' 2>/dev/null | sort -u > "results/${safe_domain}_js_raw_list.txt"
     
-    # URL을 절대 경로로 모두 변환
     > "results/${safe_domain}_js_master_list.txt"
     while read -r url; do
         [[ -z "$url" ]] && continue
@@ -72,7 +79,7 @@ collect_master() {
         fi
 
         local total_new_js=$(wc -l < "results/${safe_domain}_js_new_list.txt")
-        echo "  -> [신규 JS 필터링] 과거 분석 이력을 제외한 ${total_new_js}개의 새로운 JS 파일을 발견했습니다."
+        echo "  -> [신규 JS 필터링] ${total_new_js}개의 새로운 JS 파일을 발견했습니다."
 
         if [ "$total_new_js" -gt 0 ]; then
             local download_dir="results/${safe_domain}_js_files"
@@ -81,46 +88,33 @@ collect_master() {
 
             shuf "results/${safe_domain}_js_new_list.txt" > "results/${safe_domain}_js_urls_target.txt"
             
-            local MAX_SUCCESS=1000
+            # 💡 [방어 5] 다운로드 한도를 100개로 축소하여 6시간 제한 무조건 회피
+            local MAX_SUCCESS=100
             local success_cnt=0
             local fail_cnt=0
-            local attempt_cnt=0
-
-            echo "  -> [스텔스 다운로드] 실패 건은 무시하고 성공 기준 ${MAX_SUCCESS}개를 채울 때까지 시도합니다..."
 
             while read -r url; do
                 [[ -z "$url" ]] && continue
-                ((attempt_cnt++))
                 local safe_name=$(echo "$url" | sed 's/[^a-zA-Z0-9]/_/g' | cut -c 1-150).js
                 
-                if curl -s -L --connect-timeout 2 --max-time 4 --fail \
-                     -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36" \
+                if curl -s -L --connect-timeout 2 --max-time 3 --fail \
+                     -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0 Safari/537.36" \
                      "$url" -o "$download_dir/$safe_name"; then
                     
                     ((success_cnt++))
-                    echo "    [✓] (성공: ${success_cnt}/${MAX_SUCCESS}) 타겟 다운로드 완료"
                     echo -e "${safe_name}\t${url}" >> "results/${safe_domain}_js_mapping.txt"
-                    
-                    if [ "$success_cnt" -ge "$MAX_SUCCESS" ]; then
-                        echo "    [*] 목표 다운로드 수치(${MAX_SUCCESS}개) 달성! 스텔스 모드 종료."
-                        break
-                    fi
+                    if [ "$success_cnt" -ge "$MAX_SUCCESS" ]; then break; fi
                 else
                     ((fail_cnt++))
-                    echo "    [✗] (실패 누적: ${fail_cnt}개) 연결 거부됨 - 다른 파일로 대체합니다."
                 fi
-                sleep 0.2
             done < "results/${safe_domain}_js_urls_target.txt"
-
-            echo "  -> [작업 완료] 총 시도 횟수: ${attempt_cnt}번 | 최종 성공 확보: ${success_cnt}개 (실패/막힘: ${fail_cnt}개)"
-        else
-            echo "  -> [알림] 새로운 JS 파일이 없어 다운로드를 생략합니다. (모두 이미 분석 완료됨)"
+            echo "  -> 다운로드 완료: ${success_cnt}개 확보"
         fi
     fi
 }
 
 export -f collect_master
-echo "[*] 할당된 그룹($TARGET_FILE)에 대한 분산 수집을 시작합니다."
-xargs -P 5 -n 1 -a "$TARGET_FILE" -I {} bash -c 'collect_master "{}"'
+# 💡 [핵심 방어 6] 가상머신 터짐(OOM) 방지를 위해 동시 실행 프로세스를 2개로 고정
+xargs -P 2 -n 1 -a "$TARGET_FILE" -I {} bash -c 'collect_master "{}"'
 
 rm -f targets_group*
