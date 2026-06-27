@@ -8,6 +8,7 @@ import sqlite3
 import shutil
 import asyncio
 import aiohttp
+import requests
 from datetime import datetime
 from urllib.parse import urlparse, parse_qsl
 from openpyxl import Workbook
@@ -49,8 +50,44 @@ regex_sensitive_paths = re.compile(r'/(admin|administrator|wp-admin|manage|phpmy
 regex_credential_params = re.compile(r'(?:\?|&)(api_?key|token|jwt|auth|secret|password|pwd|access_?token)=([a-zA-Z0-9\-_\.]{8,})', re.IGNORECASE)
 regex_infra_paths = re.compile(r'/\.(git|svn|hg|aws|ssh|docker)($|/)', re.IGNORECASE)
 
-# 💡 [버그 완벽 수정] Rate Limit(429) 회피 및 정밀 JSON 파싱 엔진
-async def ask_gemini_async(session, gemini_key, batch):
+# 💡 [핵심 패치 1] API 키 계정에 열려있는 최적의 모델을 스스로 찾아내는 스캐너 엔진
+def get_best_gemini_model(api_key):
+    print("[*] 현재 API 키로 사용 가능한 최적의 Gemini AI 모델을 동적으로 탐색합니다...", flush=True)
+    try:
+        url = f"https://generativelanguage.googleapis.com/v1beta/models?key={api_key}"
+        res = requests.get(url, timeout=15)
+        if res.status_code == 200:
+            models = res.json().get('models', [])
+            # 텍스트 생성이 지원되는 모델만 필터링
+            valid_models = [m['name'] for m in models if 'generateContent' in m.get('supportedGenerationMethods', [])]
+            
+            # 해킹 분석에 가장 빠르고 적합한 모델 우선순위
+            priorities = [
+                'models/gemini-1.5-flash-latest', 
+                'models/gemini-1.5-flash', 
+                'models/gemini-1.5-pro-latest',
+                'models/gemini-pro',
+                'models/gemini-1.0-pro'
+            ]
+            
+            for p in priorities:
+                if p in valid_models:
+                    selected = p.replace('models/', '')
+                    print(f"[+] API 승인 확인! 타격 모델 설정 완료: {selected}", flush=True)
+                    return selected
+            
+            if valid_models:
+                best = valid_models[0].replace('models/', '')
+                print(f"[+] API 승인 확인! 대체 모델 설정 완료: {best}", flush=True)
+                return best
+    except Exception as e:
+        print(f"[-] 모델 동적 탐색 실패: {e}")
+    
+    print("[!] 탐색 실패. 강제로 gemini-1.5-flash-latest 모델로 돌파합니다.")
+    return "gemini-1.5-flash-latest"
+
+# 💡 [핵심 패치 2] 동적 스캔된 모델명을 주입받아 타격하는 로직으로 변경
+async def ask_gemini_async(session, gemini_key, batch, model_name):
     prompt = (
         "You are an elite Bug Bounty Hunter and Red Teamer. Analyze the following list of URLs discovered during reconnaissance.\n"
         "Evaluate the probability (0 to 100) that each URL contains a security vulnerability (such as IDOR, SSRF, SQLi, Privilege Escalation, Command Injection, or Sensitive Information Disclosure) based on its paths, parameters, and naming conventions.\n"
@@ -61,8 +98,7 @@ async def ask_gemini_async(session, gemini_key, batch):
         "- 'reason': short clear explanation in Korean of why this URL is high risk and how to test it.\n\n"
         f"URLs:\n{json.dumps(batch)}"
     )
-    # 가장 빠르고 검증된 1.5-flash 안정화 엔드포인트 적용
-    g_api_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={gemini_key}"
+    g_api_url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={gemini_key}"
     payload = {
         "contents": [{"parts": [{"text": prompt}]}],
         "generationConfig": {"responseMimeType": "application/json"}
@@ -77,7 +113,6 @@ async def ask_gemini_async(session, gemini_key, batch):
                 if not raw_reply:
                     return []
                     
-                # 어떤 포맷으로 오든 완벽하게 JSON 배열만 뜯어내는 강력한 정규식
                 match = re.search(r'\[\s*\{.*?\}\s*\]', raw_reply, re.DOTALL)
                 if match:
                     try:
@@ -85,7 +120,6 @@ async def ask_gemini_async(session, gemini_key, batch):
                     except:
                         pass
                 
-                # 정규식 실패 시 플레인 로드
                 try:
                     return json.loads(raw_reply.strip())
                 except:
@@ -96,26 +130,24 @@ async def ask_gemini_async(session, gemini_key, batch):
                 return []
                 
     except asyncio.TimeoutError:
-        print("[-] Gemini API 타임아웃 발생.")
+        print(f"[-] Gemini API 타임아웃 발생 ({model_name}).")
     except Exception as e:
         print(f"[-] Gemini 요청 실패: {str(e)}")
         
     return []
 
-# 💡 [핵심 패치] Rate Limit 429 에러(Too Many Requests)를 우회하는 4초 안전 대기열 큐 적용
-async def process_all_gemini(gemini_key, candidate_urls):
+async def process_all_gemini(gemini_key, candidate_urls, model_name):
     ai_ranked_results = []
     async with aiohttp.ClientSession() as session:
-        # 배치를 30개씩 묶음
         for i in range(0, len(candidate_urls), 30):
             batch = candidate_urls[i:i+30]
             print(f"[*] Gemini AI 지능형 분석 진행 중... ({i+1} ~ {min(i+30, len(candidate_urls))} / {len(candidate_urls)})")
             
-            res_list = await ask_gemini_async(session, gemini_key, batch)
+            res_list = await ask_gemini_async(session, gemini_key, batch, model_name)
             if isinstance(res_list, list):
                 ai_ranked_results.extend(res_list)
             
-            # 🔥 구글 무료 티어 분당 15회 제한을 절대 넘지 않도록 매 요청마다 4초씩 휴식 (DDoS 차단 방어)
+            # API 호출 과부하 방지 (1분당 요청 횟수 조절)
             if i + 30 < len(candidate_urls):
                 await asyncio.sleep(4)
                 
@@ -273,23 +305,21 @@ def build_advanced_excel_report():
         for url_map in matrix_data.values():
             for url, data in url_map.items():
                 sc = str(status_codes.get(url, 'Dead'))
-                # AI에 던질 의심스러운 URL 선별 로직
                 if url in nuclei_findings or 'TruffleHog' in data["tools"] or sc in ['200', '301', '302', '401', '403', '500'] or '?' in url:
                     candidate_urls.append(url)
                     
         candidate_urls = list(set(candidate_urls))[:300]
         if candidate_urls:
-            print(f"[+] 총 {len(candidate_urls)}개의 핵심 엔드포인트를 식별하여 Gemini AI에 추론을 요청합니다...")
-            # 비동기 통신 가동
-            ai_ranked_results = asyncio.run(process_all_gemini(gemini_key, candidate_urls))
+            # 💡 [핵심 패치 3] 동적으로 찾아낸 최적의 모델명 주입
+            selected_model = get_best_gemini_model(gemini_key)
+            print(f"[+] 총 {len(candidate_urls)}개의 핵심 엔드포인트를 식별하여 AI 추론을 요청합니다...")
+            ai_ranked_results = asyncio.run(process_all_gemini(gemini_key, candidate_urls, selected_model))
             
             if ai_ranked_results:
                 ai_ranked_results.sort(key=lambda x: x.get('probability', 0), reverse=True)
                 print(f"[+] Gemini 분석 완료! {len(ai_ranked_results)}개 표적 시트 작성 준비.")
             else:
-                print("[-] 구글 API 검열 또는 연결 오류로 인해 반환된 AI 데이터가 없습니다.")
-        else:
-            print("[-] 타겟팅할 의심스러운 URL이 부족하여 AI 분석을 스킵합니다.")
+                print("[-] 구글 API 응답 에러로 인해 반환된 데이터가 없습니다.")
 
     now_str = datetime.now().strftime("%Y%m%d_%H%M")
     
@@ -320,7 +350,6 @@ def build_advanced_excel_report():
         ws_dash.cell(1, c).font = font_header; ws_dash.cell(1, c).fill = fill_header
         ws_dash.cell(1, c).alignment = align_center; ws_dash.cell(1, c).border = thin_border
 
-    # 🔮 엑셀 탭 그리기 로직 (데이터가 1개라도 있을 때 생성)
     if ai_ranked_results:
         ws_ai = wb.create_sheet(title="🔮 Gemini AI Ranking")
         ws_ai.append(["🔙 대시보드로 돌아가기 (Return to Dashboard)"])
