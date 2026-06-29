@@ -203,10 +203,8 @@ jobs:
           # =========================================================
           # 🎣 [Phase 1.5] Dalfox 스텔스 XSS 반사 퀵 스캔 개시 (노드 ${{ matrix.group }})
           # =========================================================
-          # 1. 파라미터가 실존하는 URL 추출
           grep '=' alive_urls.txt > param_raw_urls.txt || true
           
-          # 2. 💡 [최종 보안 패치] 데이터 변조 및 Stored 에러 방지를 위해 파괴적 키워드 담긴 URL 원천 소각
           grep -v -iE "(delete|remove|clear|destroy|update|edit|modify|write|insert|post|create|join|change|leave|quit|sign)" param_raw_urls.txt > param_urls.txt || true
           
           PARAM_TOTAL=$(wc -l < param_urls.txt)
@@ -217,7 +215,8 @@ jobs:
              echo "⚡ 속도 최적화 세팅: --worker 15, --delay 100, 불필요한 마이닝 생략"
              echo "========================================================="
              
-             timeout 30m dalfox pipe param_urls.txt --only-discovery --worker 15 --delay 100 --timeout 5 --skip-mining-dom --skip-mining-dict --silence --format json > strike_out/dalfox_results_${{ matrix.group }}.json || true
+             # 💡 [핵심 패치 1] --silence 제거 및 tee 파이프라인 설계로 실시간 콘솔 출력 보장 + pipe 버그(file로 수정) 해결
+             timeout 30m dalfox file param_urls.txt --only-discovery --worker 15 --delay 100 --timeout 5 --skip-mining-dom --skip-mining-dict --format json | tee strike_out/dalfox_results_${{ matrix.group }}.json | jq -r --unbuffered 'select(.url != null) | "    🦊 [Dalfox 탐지!] 파라미터 반사 취약점 포착: \(.url)"' 2>/dev/null | awk '{print $0; fflush()}' || true
           else
              echo "========================================================="
              echo "ℹ️ 안전한 조회용 파라미터 URL이 없어 Dalfox 스캔을 건너뜁니다."
@@ -238,7 +237,7 @@ jobs:
              N_C=3
              
              if [ "$ALIVE_TOTAL" -gt 3000 ]; then
-                 echo "🚨 [경고] 타겟이 너무 많습니다. WAF IP 차단 및 6시간 타임아웃 방어를 위해 핵심 타겟 3,000개만 샘플링 타격합니다."
+                 echo "🚨 [경고] 타겟이 너무 많습니다. 3,000개만 샘플링 타격합니다."
                  shuf -n 3000 alive_urls.txt > alive_urls_sampled.txt
                  mv alive_urls_sampled.txt alive_urls.txt
              fi
@@ -246,7 +245,8 @@ jobs:
              echo "🛡️ 로직: 봇 차단 방어 (초당 15회 고정) / 무조건 최대 2시간 타임아웃 설정"
              echo "========================================================="
              
-             timeout 120m nuclei -l alive_urls.txt -t http/exposures/,http/technologies/,http/misconfiguration/ -rl $N_RL -c $N_C -H "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36" -je strike_out/nuclei_results_${{ matrix.group }}.json -silent || true
+             # 💡 [핵심 패치 2] -silent 옵션 제거 후 -stats -si 30 추가 (매 30초마다 깃허브 액션 콘솔에 진행 상태를 리포트)
+             timeout 120m nuclei -l alive_urls.txt -t http/exposures/,http/technologies/,http/misconfiguration/ -rl $N_RL -c $N_C -H "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36" -je strike_out/nuclei_results_${{ matrix.group }}.json -stats -si 30 || true
           else
              echo "========================================================="
              touch strike_out/nuclei_results_${{ matrix.group }}.json
