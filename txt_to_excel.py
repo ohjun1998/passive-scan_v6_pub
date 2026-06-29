@@ -54,6 +54,19 @@ def normalize_dynamic_path(path):
     p = re.sub(r'\b[a-zA-Z0-9]{10,}\b', '{HASH}', p)
     return p
 
+# API 식별 함수
+def check_is_api(url):
+    parsed = urlparse(url)
+    path = parsed.path.lower()
+    netloc = parsed.netloc.lower()
+    if netloc.startswith('api.') or '.api.' in netloc or '-api.' in netloc:
+        return "✅ API"
+    if '/api/' in path or path.startswith('/api') or '/v1/' in path or '/v2/' in path or '/v3/' in path or 'graphql' in path or 'swagger' in path:
+        return "✅ API"
+    if path.endswith('.json') or path.endswith('.xml'):
+        return "✅ API"
+    return "-"
+
 regex_sensitive_exts = re.compile(r'\.(env|bak|swp|old|sql|sqlite|db|dump|log|config|properties|yml|yaml|ini)$', re.IGNORECASE)
 regex_sensitive_paths = re.compile(r'/(admin|administrator|wp-admin|manage|phpmyadmin|server-status|server-info|actuator|swagger-ui|graphql)($|/)', re.IGNORECASE)
 regex_credential_params = re.compile(r'(?:\?|&)(api_?key|token|jwt|auth|secret|password|pwd|access_?token)=([a-zA-Z0-9\-_\.]{8,})', re.IGNORECASE)
@@ -187,12 +200,19 @@ def build_advanced_excel_report():
     cursor.execute("CREATE TABLE IF NOT EXISTS downloaded_js (url TEXT PRIMARY KEY)")
     cursor.execute("CREATE TABLE IF NOT EXISTS historical_subdomains (subdomain TEXT PRIMARY KEY)")
     
+    # API 카운트를 위한 스키마 확장 (기존 DB 호환 유지)
     cursor.execute('''CREATE TABLE IF NOT EXISTS target_stats (
         target TEXT PRIMARY KEY,
         passive_tot INTEGER DEFAULT 0,
         jsluice_tot INTEGER DEFAULT 0,
-        katana_tot INTEGER DEFAULT 0
+        katana_tot INTEGER DEFAULT 0,
+        api_tot INTEGER DEFAULT 0
     )''')
+    try:
+        cursor.execute("ALTER TABLE target_stats ADD COLUMN api_tot INTEGER DEFAULT 0")
+    except sqlite3.OperationalError:
+        pass # 이미 컬럼이 존재하는 경우 패스
+        
     conn.commit()
 
     cursor.execute("SELECT target FROM target_stats")
@@ -371,10 +391,11 @@ def build_advanced_excel_report():
     ws_dash = wb.active
     ws_dash.title = "Summary Dashboard"
     
+    # 대시보드 헤더에 API 누적/신규 추가
     dash_headers = [
         "No", "타겟 도메인", "🌟 신규 서브", "📊 누적 / 🔥 신규 URL", 
-        "jsluice (누적 / 신규)", "Katana (누적 / 신규)", 
-        "🔥 Nuclei 탐지", "TruffleHog 탐지", 
+        "🤖 API (누적 / 신규)", "jsluice (누적 / 신규)", "Katana (누적 / 신규)", 
+        "🔥 Nuclei 탐지", "TruffleHog 탐지", "🦊 Dalfox 탐지",
         "🟢 200 (OK)", "🟠 403/401 (권한)", "🔴 500대 (에러)"
     ]
     ws_dash.append(dash_headers)
@@ -387,11 +408,11 @@ def build_advanced_excel_report():
     high_risk_records = []
     
     g_passive_tot = g_passive_new = 0
+    g_api_tot = g_api_new = 0
     g_jsluice_tot = g_jsluice_new = 0
     g_katana_tot = g_katana_new = 0
-    g_nuc = g_truf = g_200 = g_40x = g_50x = 0
+    g_nuc = g_truf = g_dalfox = g_200 = g_40x = g_50x = 0
 
-    # ✅ [수정 1] previous_subdomains가 선언되지 않아 발생하던 NameError 해결
     cursor.execute("SELECT subdomain FROM historical_subdomains")
     previous_subdomains = {row[0] for row in cursor.fetchall()}
 
@@ -406,6 +427,15 @@ def build_advanced_excel_report():
         today_passive_count = len(url_map)
         domain_new_count = sum(1 for data in url_map.values() if data.get("is_new", False))
         
+        # API 신규/누적 카운트 계산
+        today_api_total = 0
+        api_new = 0
+        for u, d in url_map.items():
+            if check_is_api(u) != "-":
+                today_api_total += 1
+                if d.get("is_new", False):
+                    api_new += 1
+        
         today_jsluice_total = sum(1 for data in url_map.values() if 'LinkFinder' in data["tools"])
         jsluice_new = sum(1 for data in url_map.values() if 'LinkFinder' in data["tools"] and data.get("is_new", False))
         
@@ -414,22 +444,26 @@ def build_advanced_excel_report():
         
         trufflehog_count = sum(1 for data in url_map.values() if 'TruffleHog' in data["tools"])
         nuclei_count = sum(1 for u in url_map.keys() if u in nuclei_findings)
+        dalfox_count = sum(1 for u in url_map.keys() if u in dalfox_findings)
 
-        cursor.execute("SELECT passive_tot, jsluice_tot, katana_tot FROM target_stats WHERE target = ?", (raw_target,))
+        # DB에서 누적 정보 불러오기 및 업데이트
+        cursor.execute("SELECT passive_tot, jsluice_tot, katana_tot, api_tot FROM target_stats WHERE target = ?", (raw_target,))
         row = cursor.fetchone()
         
         if row:
-            db_passive_tot, db_jsluice_tot, db_katana_tot = row
+            db_passive_tot, db_jsluice_tot, db_katana_tot, db_api_tot = row
             new_passive_tot = db_passive_tot + domain_new_count
             new_jsluice_tot = db_jsluice_tot + jsluice_new
             new_katana_tot = db_katana_tot + katana_new
+            new_api_tot = db_api_tot + api_new
         else:
             new_passive_tot = today_passive_count
             new_jsluice_tot = today_jsluice_total
             new_katana_tot = today_katana_total
+            new_api_tot = today_api_total
             
-        cursor.execute("INSERT OR REPLACE INTO target_stats (target, passive_tot, jsluice_tot, katana_tot) VALUES (?, ?, ?, ?)", 
-                       (raw_target, new_passive_tot, new_jsluice_tot, new_katana_tot))
+        cursor.execute("INSERT OR REPLACE INTO target_stats (target, passive_tot, jsluice_tot, katana_tot, api_tot) VALUES (?, ?, ?, ?, ?)", 
+                       (raw_target, new_passive_tot, new_jsluice_tot, new_katana_tot, new_api_tot))
 
         count_200 = count_40x = count_50x = 0
         for url in url_map.keys():
@@ -443,14 +477,18 @@ def build_advanced_excel_report():
         new_subdomains = current_subdomains - previous_subdomains
         sub_dash_mark = "🌟 신규" if (bool(new_subdomains) and bool(previous_subdomains) and today_passive_count > 0) else "-"
         
+        # 합계(Global Total) 처리용
         g_passive_tot += new_passive_tot
         g_passive_new += domain_new_count
+        g_api_tot += new_api_tot
+        g_api_new += api_new
         g_jsluice_tot += new_jsluice_tot
         g_jsluice_new += jsluice_new
         g_katana_tot += new_katana_tot
         g_katana_new += katana_new
         g_nuc += nuclei_count
         g_truf += trufflehog_count
+        g_dalfox += dalfox_count
         g_200 += count_200
         g_40x += count_40x
         g_50x += count_50x
@@ -460,10 +498,12 @@ def build_advanced_excel_report():
             escape_formula(raw_target), 
             sub_dash_mark, 
             f"{new_passive_tot} / {domain_new_count}", 
+            f"{new_api_tot} / {api_new}",
             f"{new_jsluice_tot} / {jsluice_new}", 
             f"{new_katana_tot} / {katana_new}", 
             nuclei_count, 
-            trufflehog_count, 
+            trufflehog_count,
+            dalfox_count,
             count_200, 
             count_40x, 
             count_50x
@@ -482,9 +522,10 @@ def build_advanced_excel_report():
             
             if today_passive_count > 0:
                 if c == 4 and domain_new_count > 0: cell.font = Font(name='Malgun Gothic', bold=True, color='E83E8C')
-                elif c == 5 and jsluice_new > 0: cell.font = Font(name='Malgun Gothic', bold=True, color='E83E8C')
-                elif c == 6 and katana_new > 0: cell.font = Font(name='Malgun Gothic', bold=True, color='E83E8C')
-                elif c in [7, 8] and isinstance(cell.value, int) and cell.value > 0: cell.font = Font(name='Malgun Gothic', bold=True, color='E83E8C')
+                elif c == 5 and api_new > 0: cell.font = Font(name='Malgun Gothic', bold=True, color='E83E8C')
+                elif c == 6 and jsluice_new > 0: cell.font = Font(name='Malgun Gothic', bold=True, color='E83E8C')
+                elif c == 7 and katana_new > 0: cell.font = Font(name='Malgun Gothic', bold=True, color='E83E8C')
+                elif c in [8, 9, 10] and isinstance(cell.value, int) and cell.value > 0: cell.font = Font(name='Malgun Gothic', bold=True, color='E83E8C')
             else:
                 if c != 2: cell.font = Font(name='Malgun Gothic', color='999999', italic=True)
         dash_idx += 1
@@ -494,13 +535,13 @@ def build_advanced_excel_report():
 
         ws = wb.create_sheet(title=sheet_title)
         ws.append(["🔙 대시보드로 돌아가기 (Return to Dashboard)"])
-        ws.merge_cells('A1:G1')
+        ws.merge_cells('A1:I1')
         back_cell = ws.cell(row=1, column=1)
         back_cell.hyperlink = "#'Summary Dashboard'!A1"; back_cell.font = Font(name='Malgun Gothic', size=11, bold=True, color='0056B3', underline='single')
         back_cell.fill = PatternFill(start_color='E9ECEF', end_color='E9ECEF', fill_type='solid'); back_cell.alignment = align_left
 
-        ws.append(["No", "🔥 신규여부", "🌟 신규 서브", "소스 출처", "발견된 JS 파일명", "응답 상태", "타겟 절대 경로 (URL)"])
-        for c in range(1, 8): ws.cell(2, c).font = font_header; ws.cell(2, c).fill = fill_header; ws.cell(2, c).alignment = align_center; ws.cell(2, c).border = thin_border
+        ws.append(["No", "🔥 신규여부", "🌟 신규 서브", "🤖 API 여부", "소스 출처", "발견된 JS 파일명", "응답 상태", "🦊 Dalfox (XSS)", "타겟 절대 경로 (URL)"])
+        for c in range(1, 10): ws.cell(2, c).font = font_header; ws.cell(2, c).fill = fill_header; ws.cell(2, c).alignment = align_center; ws.cell(2, c).border = thin_border
 
         sorted_urls = sorted(url_map.items(), key=lambda x: (
             not x[1].get("is_new", False), 
@@ -521,21 +562,30 @@ def build_advanced_excel_report():
             current_status = "Skipped(위험)" if is_blacklist else ( "Static(생략)" if urlparse(url).path.lower().endswith(junk_extensions) else status_codes.get(url, 'Dead') )
             is_new_subdomain = (urlparse(url).netloc in new_subdomains) and bool(previous_subdomains)
             sub_mark = "🌟 신규" if is_new_subdomain else "-"
+            
+            api_mark = check_is_api(url)
+            dalfox_result = dalfox_findings.get(url, "-")
 
-            ws.append([sub_idx, is_new_mark, sub_mark, escape_formula(tools_str), escape_formula(files_str), current_status, escape_formula(url)])
-            for c in range(1, 8):
+            ws.append([sub_idx, is_new_mark, sub_mark, api_mark, escape_formula(tools_str), escape_formula(files_str), current_status, escape_formula(dalfox_result), escape_formula(url)])
+            for c in range(1, 10):
                 cell = ws.cell(sub_idx + 2, c)
                 cell.font = font_data; cell.border = thin_border
                 if ((sub_idx+2) % 2) == 1: cell.fill = fill_zebra
+                
                 if c == 2 and data.get("is_new", False): cell.font = Font(name='Malgun Gothic', bold=True, color='E83E8C')
                 if c == 3 and is_new_subdomain: cell.font = Font(name='Malgun Gothic', bold=True, color='E83E8C')
-                if c == 6: cell.fill = PatternFill(start_color=get_status_color(current_status), end_color=get_status_color(current_status), fill_type='solid'); cell.font = Font(name='Malgun Gothic', bold=True, color='FFFFFF'); cell.alignment = align_center
-                elif c in [4, 5, 7]: cell.alignment = align_left
+                if c == 4 and api_mark != "-": cell.font = Font(name='Malgun Gothic', bold=True, color='0056B3')
+                
+                if c == 7: cell.fill = PatternFill(start_color=get_status_color(current_status), end_color=get_status_color(current_status), fill_type='solid'); cell.font = Font(name='Malgun Gothic', bold=True, color='FFFFFF'); cell.alignment = align_center
+                elif c == 8: 
+                    cell.alignment = align_left
+                    if dalfox_result != "-": cell.font = Font(name='Malgun Gothic', bold=True, color='E83E8C')
+                elif c in [5, 6, 9]: cell.alignment = align_left
                 else: cell.alignment = align_center
 
+            # Dalfox를 제외한 High Risk 판단
             is_high_risk, reason = False, ""
             if url in nuclei_findings: is_high_risk, reason = True, f"🔥 [Nuclei 탐지] {' / '.join(list(set(nuclei_findings[url])))}"
-            elif url in dalfox_findings: is_high_risk, reason = True, dalfox_findings[url]
             elif 'TruffleHog' in data["tools"]: is_high_risk, reason = True, "🔥 [Critical] TruffleHog: 기밀 키(Secret) 유출 검증됨"
             elif is_blacklist: is_high_risk, reason = True, "⚠️ [Warning] 파괴적 엔드포인트 수동 검점 요망"
             else:
@@ -562,7 +612,6 @@ def build_advanced_excel_report():
 
         if postman_folder["item"]: postman_collection["item"].append(postman_folder)
 
-    # ✅ [수정 2] 누락되었던 High Risk (고위험군) 시트(ws_high) 생성 및 데이터 채우기 복구
     high_risk_records.sort(key=lambda x: (not x["is_new"], x["priority"], x["raw_target"], x["url"]))
     
     ws_high = wb.create_sheet(title="🚨 High Risk (고위험군)")
@@ -587,13 +636,12 @@ def build_advanced_excel_report():
             else: cell.alignment = align_center
         high_risk_idx += 1
 
-    # ✅ [수정 3] 누락되었던 Gemini AI Ranking 시트 생성 및 데이터 채우기 복구
     if ai_ranked_results:
         ws_ai = wb.create_sheet(title="🔮 Gemini AI Ranking")
         ws_ai.append(["No", "타겟 URL", "🔮 취약점 발생 확률", "취약점 유형", "Gemini AI 지능형 헌팅 가이드 심층 분석"])
         for c in range(1, 6):
             ws_ai.cell(1, c).font = font_header
-            ws_ai.cell(1, c).fill = PatternFill(start_color='6F42C1', end_color='6F42C1', fill_type='solid') # 보라색 테마
+            ws_ai.cell(1, c).fill = PatternFill(start_color='6F42C1', end_color='6F42C1', fill_type='solid')
             ws_ai.cell(1, c).alignment = align_center
             ws_ai.cell(1, c).border = thin_border
         
@@ -614,13 +662,15 @@ def build_advanced_excel_report():
         conn.commit()
     conn.close()
 
+    # 글로벌 합계 Footer 추가
     if dash_idx > 2:
         ws_dash.append([
             "", "📊 총 합계 (Total)", "-", 
             f"{g_passive_tot} / {g_passive_new}", 
+            f"{g_api_tot} / {g_api_new}",
             f"{g_jsluice_tot} / {g_jsluice_new}", 
             f"{g_katana_tot} / {g_katana_new}", 
-            g_nuc, g_truf, g_200, g_40x, g_50x
+            g_nuc, g_truf, g_dalfox, g_200, g_40x, g_50x
         ])
         for c in range(1, len(dash_headers) + 1):
             cell = ws_dash.cell(dash_idx, c)
@@ -629,7 +679,6 @@ def build_advanced_excel_report():
 
     for sheet in wb.worksheets:
         header_row = 1 if sheet.title == "Summary Dashboard" else 2
-        # 고위험군 및 AI 시트는 1번 줄이 헤더이므로 처리 방식 보정
         if sheet.title in ["🚨 High Risk (고위험군)", "🔮 Gemini AI Ranking"]:
             header_row = 1
         
@@ -637,10 +686,11 @@ def build_advanced_excel_report():
             col_letter = get_column_letter(col_idx)
             header = str(sheet.cell(header_row, col_idx).value or "")
             if header in ["타겟 절대 경로 (URL)", "고위험 경로 (Endpoint)", "타겟 URL"]: sheet.column_dimensions[col_letter].width = 80  
-            elif header == "발견된 JS 파일명": sheet.column_dimensions[col_letter].width = 50  
+            elif header in ["발견된 JS 파일명", "🦊 Dalfox (XSS)"]: sheet.column_dimensions[col_letter].width = 45  
             elif header in ["탐지 사유", "Gemini AI 지능형 헌팅 가이드 심층 분석"]: sheet.column_dimensions[col_letter].width = 55  
-            elif header in ["📊 누적 / 🔥 신규 URL", "jsluice (누적 / 신규)", "Katana (누적 / 신규)"]: sheet.column_dimensions[col_letter].width = 24
+            elif header in ["📊 누적 / 🔥 신규 URL", "🤖 API (누적 / 신규)", "jsluice (누적 / 신규)", "Katana (누적 / 신규)"]: sheet.column_dimensions[col_letter].width = 24
             elif header in ["응답 상태", "🔥 신규여부", "🔥 신규 발견", "🌟 신규 서브", "🔮 취약점 발생 확률"]: sheet.column_dimensions[col_letter].width = 16
+            elif header == "🤖 API 여부": sheet.column_dimensions[col_letter].width = 12
             else: sheet.column_dimensions[col_letter].width = 18
 
     ws_dash.column_dimensions['B'].width = 35
