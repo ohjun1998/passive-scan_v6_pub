@@ -169,7 +169,6 @@ async def process_all_gemini(gemini_key, candidate_urls, model_name):
 def build_advanced_excel_report():
     print("[+] 초고속 SQLite DB 기반 차분 분석(Differential Analysis) 엔진 가동 중...", flush=True)
     
-    # 💡 파일이 없어도 에러 없이 유연하게 배열 초기화 진행
     targets = []
     if os.path.exists('targets.txt'):
         with open('targets.txt', 'r') as f:
@@ -196,7 +195,6 @@ def build_advanced_excel_report():
     )''')
     conn.commit()
 
-    # 💡 [핵심 글로벌 패치] 현재 targets.txt 멤버와 SQLite DB에 박혀있는 과거 멤버를 유니크 합집합으로 상호 결합!
     cursor.execute("SELECT target FROM target_stats")
     db_targets = [row[0] for row in cursor.fetchall()]
     all_targets = list(set(targets + db_targets))
@@ -208,6 +206,16 @@ def build_advanced_excel_report():
     junk_extensions = ('.png', '.jpg', '.jpeg', '.gif', '.svg', '.css', '.woff', '.woff2', '.ico', '.eot', '.ttf', '.mp4')
     blacklist_words = ['logout', 'signout', 'delete', 'remove', 'revoke', 'destroy']
     
+    js_url_converter = {}
+    for mf in glob.glob('results/*_js_mapping.txt'):
+        try:
+            with open(mf, 'r', encoding='utf-8', errors='ignore') as f:
+                for line in f:
+                    if '\t' in line:
+                        s, o = line.strip().split('\t', 1)
+                        js_url_converter[s] = o
+        except: pass
+
     all_today_raw_urls = []
     temp_file_records = []
 
@@ -383,8 +391,11 @@ def build_advanced_excel_report():
     g_katana_tot = g_katana_new = 0
     g_nuc = g_truf = g_200 = g_40x = g_50x = 0
 
+    # ✅ [수정 1] previous_subdomains가 선언되지 않아 발생하던 NameError 해결
+    cursor.execute("SELECT subdomain FROM historical_subdomains")
+    previous_subdomains = {row[0] for row in cursor.fetchall()}
+
     for raw_target, url_map in matrix_data.items():
-        # 💡 [보존 패치] 오늘 발견된 건도 없고, 과거 DB 누적 이력도 아예 없는 완전 신규 빈 깡통 도메인이면 완전 패스
         cursor.execute("SELECT passive_tot FROM target_stats WHERE target = ?", (raw_target,))
         has_db = cursor.fetchone()
         if not url_map and not has_db: continue
@@ -462,27 +473,22 @@ def build_advanced_excel_report():
             cell = ws_dash.cell(dash_idx, c)
             cell.font = font_data; cell.border = thin_border
             if c == 2:
-                # 💡 [지능형 하이퍼링크] 오늘 스캔해서 실존하는 파일이 있을 때만 클릭 가능하도록 링크 부여
                 if today_passive_count > 0:
                     cell.hyperlink = f"#'{sheet_title}'!A1"
                     cell.font = Font(name='Malgun Gothic', color='0056B3', underline='single')
                 else:
-                    # 오늘 스캔 안 한 레거시 도메인은 링크를 해제하고 우아한 이탤릭 회색으로 대시보드 보존
                     cell.font = Font(name='Malgun Gothic', color='777777', italic=True)
             elif c == 3 and sub_dash_mark == "🌟 신규": cell.font = Font(name='Malgun Gothic', bold=True, color='E83E8C')
             
-            # 오늘 액티브하게 돌아간 도메인에 한해서만 신규 알람 컬러 하이라이트 인쇄
             if today_passive_count > 0:
                 if c == 4 and domain_new_count > 0: cell.font = Font(name='Malgun Gothic', bold=True, color='E83E8C')
                 elif c == 5 and jsluice_new > 0: cell.font = Font(name='Malgun Gothic', bold=True, color='E83E8C')
                 elif c == 6 and katana_new > 0: cell.font = Font(name='Malgun Gothic', bold=True, color='E83E8C')
                 elif c in [7, 8] and isinstance(cell.value, int) and cell.value > 0: cell.font = Font(name='Malgun Gothic', bold=True, color='E83E8C')
             else:
-                # 오늘 스캔 안 한 레거시 도메인은 통계 수치 텍스트를 연하게 강제 보정
                 if c != 2: cell.font = Font(name='Malgun Gothic', color='999999', italic=True)
         dash_idx += 1
 
-        # 💡 [핵심 컷오프] 오늘 수집된 데이터가 없다면 디렉토리 시트 렌더링 및 Postman 적재 단계를 건너뜀 (통계 완전 보존)
         if today_passive_count == 0:
             continue
 
@@ -556,21 +562,49 @@ def build_advanced_excel_report():
 
         if postman_folder["item"]: postman_collection["item"].append(postman_folder)
 
+    # ✅ [수정 2] 누락되었던 High Risk (고위험군) 시트(ws_high) 생성 및 데이터 채우기 복구
     high_risk_records.sort(key=lambda x: (not x["is_new"], x["priority"], x["raw_target"], x["url"]))
-    high_risk_idx = 3
     
+    ws_high = wb.create_sheet(title="🚨 High Risk (고위험군)")
+    ws_high.append(["No", "🔥 신규여부", "🌟 신규 서브", "소스 출처", "발견된 JS 파일명", "응답 상태", "타겟 도메인", "고위험 경로 (Endpoint)", "탐지 사유"])
+    for c in range(1, 10): 
+        ws_high.cell(1, c).font = font_header
+        ws_high.cell(1, c).fill = fill_header
+        ws_high.cell(1, c).alignment = align_center
+        ws_high.cell(1, c).border = thin_border
+
+    high_risk_idx = 2
     for hr in high_risk_records:
-        ws_high.append([high_risk_idx - 2, hr["is_new_mark"], hr["sub_mark"], escape_formula(hr["tools_str"]), escape_formula(hr["files_str"]), hr["current_status"], escape_formula(hr["raw_target"]), escape_formula(hr["url"]), escape_formula(hr["reason"])])
+        ws_high.append([high_risk_idx - 1, hr["is_new_mark"], hr["sub_mark"], escape_formula(hr["tools_str"]), escape_formula(hr["files_str"]), hr["current_status"], escape_formula(hr["raw_target"]), escape_formula(hr["url"]), escape_formula(hr["reason"])])
         for c in range(1, 10):
             cell = ws_high.cell(high_risk_idx, c)
             cell.font = font_data; cell.border = thin_border
-            if (high_risk_idx % 2) == 1: cell.fill = fill_zebra
+            if (high_risk_idx % 2) == 0: cell.fill = fill_zebra
             if c == 2 and hr["is_new"]: cell.font = Font(name='Malgun Gothic', bold=True, color='E83E8C')
             if c == 3 and hr["is_new_sub"]: cell.font = Font(name='Malgun Gothic', bold=True, color='E83E8C')
             if c == 6: cell.fill = PatternFill(start_color=get_status_color(hr["current_status"]), end_color=get_status_color(hr["current_status"]), fill_type='solid'); cell.font = Font(name='Malgun Gothic', bold=True, color='FFFFFF'); cell.alignment = align_center
             elif c in [4, 5, 7, 8, 9]: cell.alignment = align_left
             else: cell.alignment = align_center
         high_risk_idx += 1
+
+    # ✅ [수정 3] 누락되었던 Gemini AI Ranking 시트 생성 및 데이터 채우기 복구
+    if ai_ranked_results:
+        ws_ai = wb.create_sheet(title="🔮 Gemini AI Ranking")
+        ws_ai.append(["No", "타겟 URL", "🔮 취약점 발생 확률", "취약점 유형", "Gemini AI 지능형 헌팅 가이드 심층 분석"])
+        for c in range(1, 6):
+            ws_ai.cell(1, c).font = font_header
+            ws_ai.cell(1, c).fill = PatternFill(start_color='6F42C1', end_color='6F42C1', fill_type='solid') # 보라색 테마
+            ws_ai.cell(1, c).alignment = align_center
+            ws_ai.cell(1, c).border = thin_border
+        
+        for idx, res in enumerate(ai_ranked_results, 1):
+            ws_ai.append([idx, escape_formula(res.get('url')), f"{res.get('probability')}%", escape_formula(res.get('vuln_type')), escape_formula(res.get('reason'))])
+            for c in range(1, 6):
+                cell = ws_ai.cell(idx + 1, c)
+                cell.font = font_data; cell.border = thin_border
+                if (idx % 2) == 1: cell.fill = fill_zebra
+                if c in [2, 4, 5]: cell.alignment = align_left
+                else: cell.alignment = align_center
 
     if all_today_discovered_urls:
         cursor.executemany("INSERT OR IGNORE INTO master_urls (url) VALUES (?)", [(u,) for u in list(set(all_today_discovered_urls))])
@@ -595,10 +629,14 @@ def build_advanced_excel_report():
 
     for sheet in wb.worksheets:
         header_row = 1 if sheet.title == "Summary Dashboard" else 2
+        # 고위험군 및 AI 시트는 1번 줄이 헤더이므로 처리 방식 보정
+        if sheet.title in ["🚨 High Risk (고위험군)", "🔮 Gemini AI Ranking"]:
+            header_row = 1
+        
         for col_idx, col in enumerate(sheet.columns, 1):
             col_letter = get_column_letter(col_idx)
             header = str(sheet.cell(header_row, col_idx).value or "")
-            if header in ["타겟 절대 경로 (URL)", "고위험 경로 (Endpoint)"]: sheet.column_dimensions[col_letter].width = 80  
+            if header in ["타겟 절대 경로 (URL)", "고위험 경로 (Endpoint)", "타겟 URL"]: sheet.column_dimensions[col_letter].width = 80  
             elif header == "발견된 JS 파일명": sheet.column_dimensions[col_letter].width = 50  
             elif header in ["탐지 사유", "Gemini AI 지능형 헌팅 가이드 심층 분석"]: sheet.column_dimensions[col_letter].width = 55  
             elif header in ["📊 누적 / 🔥 신규 URL", "jsluice (누적 / 신규)", "Katana (누적 / 신규)"]: sheet.column_dimensions[col_letter].width = 24
