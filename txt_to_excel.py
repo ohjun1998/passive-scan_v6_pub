@@ -305,7 +305,7 @@ def build_advanced_excel_report():
                     status_codes[data.get('url')] = data.get('status_code', 'Dead')
         except: pass
 
-    # 💡 [신규 패치] 각 VM 노드들이 가동한 Dalfox JSON 결과물 파싱 엔진
+    # 💡 Dalfox JSON 스캔 결과 로딩 및 매핑 엔진
     dalfox_findings = {}
     for res_file in glob.glob('results/dalfox_results_*.json'):
         try:
@@ -316,7 +316,7 @@ def build_advanced_excel_report():
                     url = data.get('url', data.get('target', ''))
                     if url:
                         param_name = data.get('param', 'unknown')
-                        dalfox_findings[url] = f"⚠️ [Dalfox 반사] 파라미터 '{param_name}' 값 필터링 누출 검증 (XSS 취약 의심)"
+                        dalfox_findings[url] = f"⚠️ [Dalfox 반사 포착] 파라미터 '{param_name}' 값 필터링 누출 검증 (XSS 취약 의심)"
         except: pass
 
     nuclei_findings = {}
@@ -451,6 +451,7 @@ def build_advanced_excel_report():
         trufflehog_count = sum(1 for data in url_map.values() if 'TruffleHog' in data["tools"])
         nuclei_count = sum(1 for u in url_map.keys() if u in nuclei_findings)
 
+        # 진짜 누적 데이터 동적 결합 연산
         cursor.execute("SELECT passive_tot, jsluice_tot, katana_tot FROM target_stats WHERE target = ?", (raw_target,))
         row = cursor.fetchone()
         
@@ -558,7 +559,7 @@ def build_advanced_excel_report():
                 elif c in [4, 5, 7]: cell.alignment = align_left
                 else: cell.alignment = align_center
 
-            # 💡 [하이라이트 패치] Dalfox XSS 반사 사유 추출 로직 병합
+            # 💡 Dalfox XSS 반사 경고 라벨링 연동
             is_high_risk, reason = False, ""
             if url in nuclei_findings: is_high_risk, reason = True, f"🔥 [Nuclei 탐지] {' / '.join(list(set(nuclei_findings[url])))}"
             elif url in dalfox_findings: is_high_risk, reason = True, dalfox_findings[url]
@@ -612,12 +613,13 @@ def build_advanced_excel_report():
         conn.commit()
     conn.close()
 
+    # 파이썬 고정 변수 합산값으로 대시보드 마스터 총계 인쇄
     if dash_idx > 2:
         ws_dash.append([
             "", "📊 총 합계 (Total)", "-", 
             f"{g_passive_tot} / {g_passive_new}", 
             f"{g_jsluice_tot} / {g_jsluice_new}", 
-            f"{g_katana_tot} / {g_katana_new}", 
+            f"{g_katana_tot} / g_{g_katana_new}", 
             g_nuc, g_truf, g_200, g_40x, g_50x
         ])
         for c in range(1, len(dash_headers) + 1):
