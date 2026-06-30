@@ -30,11 +30,25 @@ jobs:
 
     - name: 핵심 정찰 도구 설치 (gau, waybackurls, jsluice, trufflehog, subfinder, katana)
       run: |
-        go install github.com/lc/gau/v2/cmd/gau@latest
-        go install github.com/tomnomnom/waybackurls@latest
-        go install github.com/BishopFox/jsluice/cmd/jsluice@latest
-        go install -v github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest
-        go install github.com/projectdiscovery/katana/cmd/katana@latest
+        # 💡 [네트워크 에러 방어] HTTP/2 스트림 에러 우회 및 자동 재시도 로직 추가
+        export GODEBUG=http2client=0
+        export GOPROXY=https://proxy.golang.org,direct
+        
+        retry_install() {
+          for i in 1 2 3; do
+            go install -v "$1" && return 0
+            echo "[-] 다운로드 실패: $1. 3초 후 재시도... ($i/3)"
+            sleep 3
+          done
+          return 1
+        }
+        
+        retry_install github.com/lc/gau/v2/cmd/gau@latest
+        retry_install github.com/tomnomnom/waybackurls@latest
+        retry_install github.com/BishopFox/jsluice/cmd/jsluice@latest
+        retry_install github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest
+        retry_install github.com/projectdiscovery/katana/cmd/katana@latest
+        
         pip install uro
         sudo apt-get install jq -y
         curl -sSfL --retry 5 --retry-delay 5 "https://github.com/trufflesecurity/trufflehog/releases/download/v3.82.0/trufflehog_3.82.0_linux_amd64.tar.gz" -o trufflehog.tar.gz
@@ -163,9 +177,23 @@ jobs:
 
     - name: 최신 Httpx, Nuclei, Dalfox 및 uro 설치
       run: |
-        go install -v github.com/projectdiscovery/httpx/cmd/httpx@latest
-        go install -v github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest
-        go install github.com/hahwul/dalfox/v2@latest
+        # 💡 [네트워크 에러 방어] HTTP/2 스트림 에러 우회 및 자동 재시도 로직 추가
+        export GODEBUG=http2client=0
+        export GOPROXY=https://proxy.golang.org,direct
+        
+        retry_install() {
+          for i in 1 2 3; do
+            go install -v "$1" && return 0
+            echo "[-] 다운로드 실패: $1. 3초 후 재시도... ($i/3)"
+            sleep 3
+          done
+          return 1
+        }
+        
+        retry_install github.com/projectdiscovery/httpx/cmd/httpx@latest
+        retry_install github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest
+        retry_install github.com/hahwul/dalfox/v2@latest
+        
         pip install uro
         echo "$HOME/go/bin" >> $GITHUB_PATH
 
@@ -215,7 +243,6 @@ jobs:
              echo "⚡ 속도 최적화 세팅: --worker 15, --delay 100, 불필요한 마이닝 생략"
              echo "========================================================="
              
-             # 💡 [핵심 패치 1] --silence 제거 및 tee 파이프라인 설계로 실시간 콘솔 출력 보장 + pipe 버그(file로 수정) 해결
              timeout 30m dalfox file param_urls.txt --only-discovery --worker 15 --delay 100 --timeout 5 --skip-mining-dom --skip-mining-dict --format json | tee strike_out/dalfox_results_${{ matrix.group }}.json | jq -r --unbuffered 'select(.url != null) | "    🦊 [Dalfox 탐지!] 파라미터 반사 취약점 포착: \(.url)"' 2>/dev/null | awk '{print $0; fflush()}' || true
           else
              echo "========================================================="
@@ -245,7 +272,6 @@ jobs:
              echo "🛡️ 로직: 봇 차단 방어 (초당 15회 고정) / 무조건 최대 2시간 타임아웃 설정"
              echo "========================================================="
              
-             # 💡 [핵심 패치 2] -silent 옵션 제거 후 -stats -si 30 추가 (매 30초마다 깃허브 액션 콘솔에 진행 상태를 리포트)
              timeout 120m nuclei -l alive_urls.txt -t http/exposures/,http/technologies/,http/misconfiguration/ -rl $N_RL -c $N_C -H "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36" -je strike_out/nuclei_results_${{ matrix.group }}.json -stats -si 30 || true
           else
              echo "========================================================="
