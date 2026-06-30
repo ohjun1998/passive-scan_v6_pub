@@ -30,25 +30,11 @@ jobs:
 
     - name: 핵심 정찰 도구 설치 (gau, waybackurls, jsluice, trufflehog, subfinder, katana)
       run: |
-        # 💡 [네트워크 에러 방어] HTTP/2 스트림 에러 우회 및 자동 재시도 로직 추가
-        export GODEBUG=http2client=0
-        export GOPROXY=https://proxy.golang.org,direct
-        
-        retry_install() {
-          for i in 1 2 3; do
-            go install -v "$1" && return 0
-            echo "[-] 다운로드 실패: $1. 3초 후 재시도... ($i/3)"
-            sleep 3
-          done
-          return 1
-        }
-        
-        retry_install github.com/lc/gau/v2/cmd/gau@latest
-        retry_install github.com/tomnomnom/waybackurls@latest
-        retry_install github.com/BishopFox/jsluice/cmd/jsluice@latest
-        retry_install github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest
-        retry_install github.com/projectdiscovery/katana/cmd/katana@latest
-        
+        go install github.com/lc/gau/v2/cmd/gau@latest
+        go install github.com/tomnomnom/waybackurls@latest
+        go install github.com/BishopFox/jsluice/cmd/jsluice@latest
+        go install -v github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest
+        go install github.com/projectdiscovery/katana/cmd/katana@latest
         pip install uro
         sudo apt-get install jq -y
         curl -sSfL --retry 5 --retry-delay 5 "https://github.com/trufflesecurity/trufflehog/releases/download/v3.82.0/trufflehog_3.82.0_linux_amd64.tar.gz" -o trufflehog.tar.gz
@@ -177,22 +163,9 @@ jobs:
 
     - name: 최신 Httpx, Nuclei, Dalfox 및 uro 설치
       run: |
-        export GODEBUG=http2client=0
-        export GOPROXY=https://proxy.golang.org,direct
-        
-        retry_install() {
-          for i in 1 2 3; do
-            go install -v "$1" && return 0
-            echo "[-] 다운로드 실패: $1. 3초 후 재시도... ($i/3)"
-            sleep 3
-          done
-          return 1
-        }
-        
-        retry_install github.com/projectdiscovery/httpx/cmd/httpx@latest
-        retry_install github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest
-        retry_install github.com/hahwul/dalfox/v2@latest
-        
+        go install -v github.com/projectdiscovery/httpx/cmd/httpx@latest
+        go install -v github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest
+        go install github.com/hahwul/dalfox/v2@latest
         pip install uro
         echo "$HOME/go/bin" >> $GITHUB_PATH
 
@@ -230,7 +203,10 @@ jobs:
           # =========================================================
           # 🎣 [Phase 1.5] Dalfox 스텔스 XSS 반사 퀵 스캔 개시 (노드 ${{ matrix.group }})
           # =========================================================
+          # 1. 파라미터가 실존하는 URL 추출
           grep '=' alive_urls.txt > param_raw_urls.txt || true
+          
+          # 2. 💡 [최종 보안 패치] 데이터 변조 및 Stored 에러 방지를 위해 파괴적 키워드 담긴 URL 원천 소각
           grep -v -iE "(delete|remove|clear|destroy|update|edit|modify|write|insert|post|create|join|change|leave|quit|sign)" param_raw_urls.txt > param_urls.txt || true
           
           PARAM_TOTAL=$(wc -l < param_urls.txt)
@@ -238,18 +214,10 @@ jobs:
           if [ "$PARAM_TOTAL" -gt 0 ]; then
              echo "========================================================="
              echo "🎯 데이터 변조 위험이 완벽히 제거된 ${PARAM_TOTAL}개 안전 URL 스캔 시작"
-             echo "⚡ 3차 속도 최적화: --worker 50, --timeout 2, 부가 기능(BAV, Grep) 완벽 차단"
+             echo "🛡️ 세팅: --only-discovery (패킷 85% 절약) / --worker 1 --delay 200 (WAF 우회)"
              echo "========================================================="
              
-             # 💡 [핵심 패치] Dalfox의 불필요한 로그는 숨기고(grep), 현재 스캔 중인 URL과 반사된 파라미터만 실시간으로 뽑아냅니다.
-             timeout 15m dalfox file param_urls.txt \
-               --only-discovery --worker 50 --timeout 2 \
-               --skip-mining-dom --skip-mining-dict --skip-bav --skip-grepping \
-               --format json --no-color \
-               2> >(awk '/Starting scan/ {print "    🔎 [Dalfox 타겟] " $NF; fflush()} /Reflected/ {print "      ↳ ⚡ 파라미터 반사됨: " $3; fflush()}') \
-               | tee strike_out/dalfox_results_${{ matrix.group }}.json \
-               | jq -r --unbuffered 'select(.url != null) | "    🦊 \033[31;1m[Dalfox 탐지!] XSS 취약점 포착: \(.url)\033[0m"' 2>/dev/null \
-               | awk '{print $0; fflush()}' || true
+             timeout 30m dalfox pipe param_urls.txt --only-discovery --worker 1 --delay 200 --silence --format json > strike_out/dalfox_results_${{ matrix.group }}.json || true
           else
              echo "========================================================="
              echo "ℹ️ 안전한 조회용 파라미터 URL이 없어 Dalfox 스캔을 건너뜁니다."
@@ -259,26 +227,26 @@ jobs:
           rm -f param_raw_urls.txt
           
           # =========================================================
-          # [Phase 2] Nuclei 정밀 타격
+          # [Phase 2] Nuclei 정밀 타격 (초경량/고속 모드)
           # =========================================================
           echo "========================================================="
           echo "🥷 [Phase 2] Nuclei 스텔스 정밀 타격 시작"
           echo "🎯 대상: Httpx 생존 확인된 ${ALIVE_TOTAL}개 URL"
           
           if [ "$ALIVE_TOTAL" -gt 0 ]; then
-             N_RL=45
-             N_C=5
+             N_RL=15
+             N_C=3
              
              if [ "$ALIVE_TOTAL" -gt 3000 ]; then
-                 echo "🚨 [경고] 타겟이 너무 많습니다. 3,000개만 샘플링 타격합니다."
+                 echo "🚨 [경고] 타겟이 너무 많습니다. WAF IP 차단 및 6시간 타임아웃 방어를 위해 핵심 타겟 3,000개만 샘플링 타격합니다."
                  shuf -n 3000 alive_urls.txt > alive_urls_sampled.txt
                  mv alive_urls_sampled.txt alive_urls.txt
              fi
              
-             echo "🛡️ 로직: 불필요한 Info 템플릿 제거 / 초당 45회 리미트 / 최대 1시간 타임아웃"
+             echo "🛡️ 로직: 봇 차단 방어 (초당 15회 고정) / 무조건 최대 2시간 타임아웃 설정"
              echo "========================================================="
              
-             timeout 60m nuclei -l alive_urls.txt -t http/exposures/,http/vulnerabilities/,http/misconfiguration/ -severity critical,high,medium -rl $N_RL -c $N_C -H "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36" -je strike_out/nuclei_results_${{ matrix.group }}.json -stats -si 30 || true
+             timeout 120m nuclei -l alive_urls.txt -t http/exposures/configs/,http/default-logins/,http/miscellaneous/ -tags config,panel,exposure,swagger,docs -rl $N_RL -c $N_C -H "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36" -je strike_out/nuclei_results_${{ matrix.group }}.json -silent || true
           else
              echo "========================================================="
              touch strike_out/nuclei_results_${{ matrix.group }}.json
