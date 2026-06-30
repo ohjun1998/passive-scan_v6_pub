@@ -201,7 +201,7 @@ jobs:
           ALIVE_TOTAL=$(wc -l < alive_urls.txt)
           
           # =========================================================
-          # 🎣 [Phase 1.5] Dalfox 스텔스 XSS 반사 퀵 스캔 개시 (노드 ${{ matrix.group }})
+          # 🎣 [Phase 1.5] Dalfox 스텔스 XSS 반사 퀵 스캔 개시
           # =========================================================
           grep '=' alive_urls.txt > param_raw_urls.txt || true
           grep -v -iE "(delete|remove|clear|destroy|update|edit|modify|write|insert|post|create|join|change|leave|quit|sign)" param_raw_urls.txt > param_urls.txt || true
@@ -210,11 +210,10 @@ jobs:
           
           if [ "$PARAM_TOTAL" -gt 0 ]; then
              echo "========================================================="
-             echo "🎯 데이터 변조 위험이 완벽히 제거된 ${PARAM_TOTAL}개 안전 URL 스캔 시작"
-             echo "⚡ 3차 속도 최적화 및 진행상황 표시 모드: --worker 50, --timeout 2"
+             echo "🎯 데이터 변조 위험이 완벽히 제거된 ${PARAM_TOTAL}개 안전 URL 스캔 시작 (XSS)"
+             echo "⚡ 세팅: --only-discovery / --worker 50 / --timeout 2"
              echo "========================================================="
              
-             # ✅ [핵심 패치] Dalfox 진행 상황을 GitHub Actions 로그 화면에서 직접 볼 수 있도록 필터 제거
              timeout 15m dalfox file param_urls.txt \
                --only-discovery --worker 50 --timeout 2 \
                --skip-mining-dom --skip-mining-dict --skip-bav --skip-grepping \
@@ -225,13 +224,37 @@ jobs:
              echo "========================================================="
              touch strike_out/dalfox_results_${{ matrix.group }}.json
           fi
+          
+          # =========================================================
+          # 🛢️ [Phase 1.8] Nuclei DAST: Blind SQLi 포인트 초고속 탐색
+          # =========================================================
+          if [ "$PARAM_TOTAL" -gt 0 ]; then
+             echo "========================================================="
+             echo "🛢️ [Phase 1.8] Nuclei DAST: Blind SQLi (Time/Boolean) 포인트 퀵 스캔 시작"
+             echo "🎯 대상: 파라미터가 포함된 ${PARAM_TOTAL}개 안전 URL"
+             echo "========================================================="
+             
+             timeout 30m nuclei -l param_urls.txt \
+               -dast \
+               -tags sqli,blind,timebased,boolean \
+               -rl 30 -c 5 \
+               -H "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36" \
+               -je strike_out/nuclei_results_blind_sqli_${{ matrix.group }}.json \
+               -silent || true
+               
+             # 탐지 시 콘솔 알림 출력
+             cat strike_out/nuclei_results_blind_sqli_${{ matrix.group }}.json 2>/dev/null | jq -r 'select(.url != null) | "    🛢️ \033[31;1m[SQLi 탐지!] Blind SQLi 포인트 포착: \(.url)\033[0m"' | awk '{print $0; fflush()}' || true
+          else
+             touch strike_out/nuclei_results_blind_sqli_${{ matrix.group }}.json
+          fi
+          
           rm -f param_raw_urls.txt
           
           # =========================================================
-          # [Phase 2] Nuclei 정밀 타격 (초경량/고속 모드)
+          # 🥷 [Phase 2] Nuclei 정밀 타격 (초경량/고속 모드)
           # =========================================================
           echo "========================================================="
-          echo "🥷 [Phase 2] Nuclei 스텔스 정밀 타격 시작"
+          echo "🥷 [Phase 2] Nuclei 스텔스 정밀 타격 시작 (초경량 템플릿)"
           echo "🎯 대상: Httpx 생존 확인된 ${ALIVE_TOTAL}개 URL"
           
           if [ "$ALIVE_TOTAL" -gt 0 ]; then
@@ -239,15 +262,14 @@ jobs:
              N_C=3
              
              if [ "$ALIVE_TOTAL" -gt 3000 ]; then
-                 echo "🚨 [경고] 타겟이 너무 많습니다. WAF IP 차단 및 6시간 타임아웃 방어를 위해 핵심 타겟 3,000개만 샘플링 타격합니다."
+                 echo "🚨 [경고] 타겟이 너무 많습니다. 3,000개만 샘플링 타격합니다."
                  shuf -n 3000 alive_urls.txt > alive_urls_sampled.txt
                  mv alive_urls_sampled.txt alive_urls.txt
              fi
              
-             echo "🛡️ 로직: 봇 차단 방어 (초당 15회 고정) / 무조건 최대 2시간 타임아웃 설정"
+             echo "🛡️ 로직: 초경량 템플릿(Config, Default-logins) / 초당 15회 제한"
              echo "========================================================="
              
-             # ✅ [경량 스캔 패치] Config, 환경파일, 기본 로그인, Docs 문서 위주로만 빠르고 가볍게 스캔
              timeout 120m nuclei -l alive_urls.txt \
                -t http/exposures/configs/,http/default-logins/,http/miscellaneous/ \
                -tags config,panel,exposure,swagger,docs \
@@ -261,6 +283,7 @@ jobs:
         else
           touch strike_out/httpx_results_${{ matrix.group }}.json
           touch strike_out/dalfox_results_${{ matrix.group }}.json
+          touch strike_out/nuclei_results_blind_sqli_${{ matrix.group }}.json
           touch strike_out/nuclei_results_${{ matrix.group }}.json
         fi
 
