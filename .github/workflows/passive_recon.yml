@@ -240,10 +240,10 @@ jobs:
           if [ "$PARAM_TOTAL" -gt 0 ]; then
              echo "========================================================="
              echo "🎯 데이터 변조 위험이 완벽히 제거된 ${PARAM_TOTAL}개 안전 URL 스캔 시작"
-             echo "⚡ 속도 최적화 세팅: --worker 15, --delay 100, 불필요한 마이닝 생략"
+             echo "⚡ 2차 속도 최적화: --worker 30, --delay 50, --timeout 3 (무한 딜레이 방지)"
              echo "========================================================="
              
-             timeout 30m dalfox file param_urls.txt --only-discovery --worker 15 --delay 100 --timeout 5 --skip-mining-dom --skip-mining-dict --format json | tee strike_out/dalfox_results_${{ matrix.group }}.json | jq -r --unbuffered 'select(.url != null) | "    🦊 [Dalfox 탐지!] 파라미터 반사 취약점 포착: \(.url)"' 2>/dev/null | awk '{print $0; fflush()}' || true
+             timeout 30m dalfox file param_urls.txt --only-discovery --worker 30 --delay 50 --timeout 3 --skip-mining-dom --skip-mining-dict --format json | tee strike_out/dalfox_results_${{ matrix.group }}.json | jq -r --unbuffered 'select(.url != null) | "    🦊 [Dalfox 탐지!] 파라미터 반사 취약점 포착: \(.url)"' 2>/dev/null | awk '{print $0; fflush()}' || true
           else
              echo "========================================================="
              echo "ℹ️ 안전한 조회용 파라미터 URL이 없어 Dalfox 스캔을 건너뜁니다."
@@ -260,8 +260,8 @@ jobs:
           echo "🎯 대상: Httpx 생존 확인된 ${ALIVE_TOTAL}개 URL"
           
           if [ "$ALIVE_TOTAL" -gt 0 ]; then
-             N_RL=15
-             N_C=3
+             N_RL=45
+             N_C=5
              
              if [ "$ALIVE_TOTAL" -gt 3000 ]; then
                  echo "🚨 [경고] 타겟이 너무 많습니다. 3,000개만 샘플링 타격합니다."
@@ -269,10 +269,10 @@ jobs:
                  mv alive_urls_sampled.txt alive_urls.txt
              fi
              
-             echo "🛡️ 로직: 봇 차단 방어 (초당 15회 고정) / 무조건 최대 2시간 타임아웃 설정"
+             echo "🛡️ 로직: 불필요한 Info 템플릿 제거 / 초당 45회 리미트 / 최대 1시간 타임아웃"
              echo "========================================================="
              
-             timeout 120m nuclei -l alive_urls.txt -t http/exposures/,http/technologies/,http/misconfiguration/ -rl $N_RL -c $N_C -H "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36" -je strike_out/nuclei_results_${{ matrix.group }}.json -stats -si 30 || true
+             timeout 60m nuclei -l alive_urls.txt -t http/exposures/,http/vulnerabilities/,http/misconfiguration/ -severity critical,high,medium -rl $N_RL -c $N_C -H "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36" -je strike_out/nuclei_results_${{ matrix.group }}.json -stats -si 30 || true
           else
              echo "========================================================="
              touch strike_out/nuclei_results_${{ matrix.group }}.json
