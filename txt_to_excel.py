@@ -332,7 +332,7 @@ def build_advanced_excel_report():
                 for line in f:
                     if not line.strip(): continue
                     data = json.loads(line.strip())
-                    url_val = data.get('matched-at', data.get('host', ''))
+                    url_val = data.get('matched-at', data.get('url', data.get('host', '')))
                     info_name = data.get('info', {}).get('name', '').lower()
                     if url_val:
                         base_u = get_base_url(url_val)
@@ -342,7 +342,7 @@ def build_advanced_excel_report():
                             vuln_data_by_base[base_u].add("SSTI")
         except: pass
 
-    # 일반 Nuclei 설정 파일 등 기초 스캔 파싱
+    # 일반 Nuclei 설정 파일 등 기초 스캔 파싱 (Phase 2 결과물)
     nuclei_findings = {}
     for res_file in glob.glob('results/nuclei_results_*.json'):
         try:
@@ -680,7 +680,7 @@ def build_advanced_excel_report():
             elif header in ["탐지 사유", "Gemini AI 지능형 헌팅 가이드 심층 분석"]: sheet.column_dimensions[col_letter].width = 55  
             elif header in ["📊 누적 / 🔥 신규 URL", "jsluice (누적 / 신규)", "Katana (누적 / 신규)"]: sheet.column_dimensions[col_letter].width = 24
             elif header in ["🎯 취약점 요약"]: sheet.column_dimensions[col_letter].width = 20
-            elif header in ["🎯 취약점", "응답 상태", "🔥 신규여부", "🌟 신규 서브", "🔮 취약점 발생 확률"]: sheet.column_dimensions[col_letter].width = 16
+            elif header in ["🎯 취약점", "응답 상태", "🔥 신규여부", "🔥 신규 발견", "🌟 신규 서브", "🔮 취약점 발생 확률"]: sheet.column_dimensions[col_letter].width = 16
             else: sheet.column_dimensions[col_letter].width = 18
 
     ws_dash.column_dimensions['B'].width = 35
