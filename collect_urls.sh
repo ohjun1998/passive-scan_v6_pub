@@ -26,14 +26,12 @@ collect_master() {
         # 💡 [방어 1] 서브도메인이 너무 많으면 메모리가 터지므로 1000개로 컷트
         shuf -n 1000 "results/${safe_domain}_subs.txt" -o "results/${safe_domain}_subs.txt" 2>/dev/null || true
         
-        # 🔥 [요청 반영] 아카이브 수집 제한을 5분에서 10분(10m)으로 연장
-        cat "results/${safe_domain}_subs.txt" | timeout 10m gau > "results/${safe_domain}_gau.txt" 2>/dev/null
-        cat "results/${safe_domain}_subs.txt" | timeout 10m waybackurls > "results/${safe_domain}_waybackurls.txt" 2>/dev/null
+        cat "results/${safe_domain}_subs.txt" | timeout 5m gau > "results/${safe_domain}_gau.txt" 2>/dev/null
+        cat "results/${safe_domain}_subs.txt" | timeout 5m waybackurls > "results/${safe_domain}_waybackurls.txt" 2>/dev/null
     else
         echo "[+] [${raw_domain}] 🔍 단일 도메인 정찰..."
-        # 🔥 [요청 반영] 아카이브 수집 제한을 5분에서 10분(10m)으로 연장
-        echo "$base_domain" | timeout 10m gau > "results/${safe_domain}_gau.txt" 2>/dev/null
-        echo "$base_domain" | timeout 10m waybackurls > "results/${safe_domain}_waybackurls.txt" 2>/dev/null
+        echo "$base_domain" | timeout 5m gau > "results/${safe_domain}_gau.txt" 2>/dev/null
+        echo "$base_domain" | timeout 5m waybackurls > "results/${safe_domain}_waybackurls.txt" 2>/dev/null
     fi
 
     grep -iE "$regex" "results/${safe_domain}_gau.txt" | sort -u -o "results/${safe_domain}_gau.txt"
@@ -90,8 +88,8 @@ collect_master() {
 
             shuf "results/${safe_domain}_js_new_list.txt" > "results/${safe_domain}_js_urls_target.txt"
             
-            # 💡 다운로드 한도를 100개로 축소하여 6시간 제한 무조건 회피
-            local MAX_SUCCESS=100
+            # 💡 다운로드 한도를 500개로 상향 조정 (최대 500개의 JS 파일 다운로드)
+            local MAX_SUCCESS=500
             local success_cnt=0
             local fail_cnt=0
 
